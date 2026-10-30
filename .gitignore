@@ -8,3 +8,13 @@ venv/
 dist/
 build/
 .env
+.env.*
+!.env.example
+
+# local runtime state (databases, uploaded documents, generated artefacts)
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
