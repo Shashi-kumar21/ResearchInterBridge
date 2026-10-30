@@ -12,7 +12,7 @@ import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -60,8 +60,7 @@ MIGRATIONS: tuple[Migration, ...] = (
 def utc_now() -> str:
     """Return the current UTC time as an ISO-8601 string with microseconds."""
 
-    # datetime.UTC needs Python 3.11; timezone.utc keeps the 3.10 runtime working.
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")  # noqa: UP017
+    return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
 def validate_migrations(migrations: Sequence[Migration] = MIGRATIONS) -> None:
@@ -121,8 +120,43 @@ def session(database_path: Path | str) -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
+def connect_readonly(database_path: Path | str) -> sqlite3.Connection:
+    """Open an existing SQLite file read-only.
+
+    Used by health probes: a readiness check must never create tables, touch the
+    journal mode or otherwise write to the database (QA m3). A missing file is
+    reported as an actionable :class:`FileNotFoundError` instead of being created.
+    """
+
+    path = Path(database_path).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(
+            f"database file {path} does not exist; "
+            "run `python -m research_inter_bridge migrate` first."
+        )
+    connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=5.0)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def schema_version(connection: sqlite3.Connection) -> int:
+    """Return the applied migration version without modifying the schema.
+
+    Unlike :func:`current_version` this never creates the bookkeeping table, so
+    it is safe on read-only connections.
+    """
+
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
+    ).fetchone()
+    if exists is None:
+        return 0
+    row = connection.execute("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations")
+    return int(row.fetchone()["version"])
+
+
 def current_version(connection: sqlite3.Connection) -> int:
-    """Return the highest applied migration version (0 when unmigrated)."""
+    """Return the highest applied migration version, creating the ledger if absent."""
 
     connection.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations ("
@@ -130,8 +164,7 @@ def current_version(connection: sqlite3.Connection) -> int:
         "name TEXT NOT NULL, "
         "applied_at TEXT NOT NULL)"
     )
-    row = connection.execute("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations")
-    return int(row.fetchone()["version"])
+    return schema_version(connection)
 
 
 def apply_migrations(

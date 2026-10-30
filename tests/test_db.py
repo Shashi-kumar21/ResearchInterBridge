@@ -150,6 +150,40 @@ def test_audit_event_requires_actor_action_and_outcome(tmp_path: Path) -> None:
             db.record_audit_event(connection, actor="", action="x", outcome="success")
 
 
+def test_connect_readonly_refuses_to_create_a_missing_database(tmp_path: Path) -> None:
+    database_path = tmp_path / "absent.db"
+
+    with pytest.raises(FileNotFoundError, match="migrate"):
+        db.connect_readonly(database_path)
+
+    assert database_path.exists() is False
+
+
+def test_connect_readonly_cannot_write(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.db"
+    with db.session(database_path) as connection:
+        db.apply_migrations(connection)
+
+    connection = db.connect_readonly(database_path)
+    try:
+        assert db.schema_version(connection) == db.latest_version()
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            connection.execute("CREATE TABLE nope (id INTEGER)")
+    finally:
+        connection.close()
+
+
+def test_schema_version_does_not_create_the_ledger(tmp_path: Path) -> None:
+    with db.session(tmp_path / "app.db") as connection:
+        assert db.schema_version(connection) == 0
+        tables = {
+            row["name"]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+
+    assert "schema_migrations" not in tables
+
+
 def test_record_audit_event_joins_the_callers_transaction(tmp_path: Path) -> None:
     migrations = (
         db.MIGRATIONS[0],

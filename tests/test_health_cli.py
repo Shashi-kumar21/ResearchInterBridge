@@ -11,6 +11,8 @@ from research_inter_bridge.health import check_health
 
 def test_health_fails_before_migration(tmp_path: Path) -> None:
     settings = Settings(database_path=tmp_path / "app.db")
+    with db.session(settings.database_path):
+        pass  # initialise an empty database file without migrating it
 
     report = check_health(settings)
 
@@ -19,6 +21,33 @@ def test_health_fails_before_migration(tmp_path: Path) -> None:
     assert report.checks["schema_current"] is False
     assert report.schema_version == 0
     assert "migrate" in report.details["schema_hint"]
+
+
+def test_health_reports_missing_database(tmp_path: Path) -> None:
+    settings = Settings(database_path=tmp_path / "absent.db")
+
+    report = check_health(settings)
+
+    assert report.ok is False
+    assert report.checks["database_reachable"] is False
+    assert "migrate" in report.details["database_error"]
+
+
+def test_health_does_not_write_to_the_database(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.db"
+    with db.session(database_path):
+        pass
+
+    report = check_health(Settings(database_path=database_path))
+
+    assert report.ok is False  # unmigrated, but the probe itself must stay read-only
+    with db.session(database_path) as connection:
+        tables = {
+            row["name"]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+    assert "schema_migrations" not in tables
+    assert "audit_events" not in tables
 
 
 def test_health_passes_after_migration(tmp_path: Path) -> None:
@@ -45,7 +74,7 @@ def test_health_reports_unusable_path_without_raising(tmp_path: Path) -> None:
 
     assert report.ok is False
     assert report.checks["database_reachable"] is False
-    assert "filesystem_error" in report.details
+    assert "database_error" in report.details
 
 
 def test_cli_migrate_then_health_exits_zero(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -63,12 +92,16 @@ def test_cli_migrate_then_health_exits_zero(tmp_path: Path, monkeypatch, capsys)
 
 
 def test_cli_health_exits_one_when_schema_missing(tmp_path: Path, monkeypatch, capsys) -> None:
-    monkeypatch.setenv("RIB_DATABASE_PATH", str(tmp_path / "unmigrated.db"))
+    database_path = tmp_path / "unmigrated.db"
+    monkeypatch.setenv("RIB_DATABASE_PATH", str(database_path))
+    with db.session(database_path):
+        pass
 
     assert main(["--env-file", str(tmp_path / "absent.env"), "health"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["checks"]["schema_current"] is False
+    assert "Run `python -m research_inter_bridge migrate`." in payload["details"]["schema_hint"]
 
 
 def test_cli_reports_configuration_error(tmp_path: Path, monkeypatch, capsys) -> None:
