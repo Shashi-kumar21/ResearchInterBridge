@@ -150,6 +150,44 @@ def test_audit_event_requires_actor_action_and_outcome(tmp_path: Path) -> None:
             db.record_audit_event(connection, actor="", action="x", outcome="success")
 
 
+def test_record_audit_event_joins_the_callers_transaction(tmp_path: Path) -> None:
+    migrations = (
+        db.MIGRATIONS[0],
+        db.Migration(
+            version=2,
+            name="notes",
+            statements=("CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)",),
+        ),
+    )
+
+    with db.session(tmp_path / "app.db") as connection:
+        db.apply_migrations(connection, migrations)
+
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("INSERT INTO notes (text) VALUES ('pending')")
+        db.record_audit_event(
+            connection,
+            actor="student:1",
+            action="outreach.send",
+            outcome="pending",
+        )
+        connection.execute("ROLLBACK")
+
+        notes = connection.execute("SELECT COUNT(*) AS c FROM notes").fetchone()["c"]
+        events = connection.execute("SELECT COUNT(*) AS c FROM audit_events").fetchone()["c"]
+
+    assert (notes, events) == (0, 0)
+
+
+def test_record_audit_event_autocommits_outside_a_transaction(tmp_path: Path) -> None:
+    with db.session(tmp_path / "app.db") as connection:
+        db.apply_migrations(connection)
+        db.record_audit_event(connection, actor="cli", action="database.migrate", outcome="success")
+
+    with db.session(tmp_path / "app.db") as connection:
+        assert len(db.list_audit_events(connection)) == 1
+
+
 def test_list_audit_events_rejects_non_positive_limit(tmp_path: Path) -> None:
     with db.session(tmp_path / "app.db") as connection:
         db.apply_migrations(connection)

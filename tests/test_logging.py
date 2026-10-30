@@ -5,6 +5,7 @@ import logging
 
 from research_inter_bridge.logging import (
     REDACTED,
+    RedactingFormatter,
     RedactionFilter,
     configure_logging,
     get_logger,
@@ -116,4 +117,38 @@ def test_configure_logging_replaces_previous_handlers() -> None:
     root = logging.getLogger()
     assert len(root.handlers) == 1
     assert root.level == logging.WARNING
-    assert any(isinstance(f, RedactionFilter) for f in root.handlers[0].filters)
+    handler = root.handlers[0]
+    assert any(isinstance(f, RedactionFilter) for f in handler.filters)
+    assert isinstance(handler.formatter, RedactingFormatter)
+
+
+def test_exception_tracebacks_are_redacted() -> None:
+    stream = io.StringIO()
+    configure_logging("DEBUG", stream=stream)
+
+    try:
+        raise RuntimeError(
+            "call failed for https://api.example.com/x?access_token=ya29.SECRETSECRET123"
+        )
+    except RuntimeError:
+        get_logger("research_inter_bridge.tests").exception("request failed")
+
+    output = stream.getvalue()
+    assert "request failed" in output
+    assert "RuntimeError" in output
+    assert "SECRETSECRET123" not in output
+    assert REDACTED in output
+
+
+def test_exception_with_basic_auth_header_is_redacted() -> None:
+    stream = io.StringIO()
+    configure_logging("DEBUG", stream=stream)
+
+    try:
+        raise ValueError("Authorization: Basic dXNlcjpwYXNzd29yZA==")
+    except ValueError:
+        get_logger("research_inter_bridge.tests").exception("login failed")
+
+    output = stream.getvalue()
+    assert "dXNlcjpwYXNzd29yZA==" not in output
+    assert REDACTED in output

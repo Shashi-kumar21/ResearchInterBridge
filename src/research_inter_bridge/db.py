@@ -190,6 +190,11 @@ def record_audit_event(
 
     ``metadata`` is redacted before it is persisted: audit rows must never
     contain tokens or private document text.
+
+    The caller owns the transaction. Connections are opened with
+    ``isolation_level=None``, so outside an explicit ``BEGIN`` the insert
+    autocommits; inside one it joins the caller's transaction and a rollback
+    removes it too (state change + audit row stay atomic).
     """
 
     if not actor or not action or not outcome:
@@ -209,7 +214,6 @@ def record_audit_event(
             json.dumps(safe_metadata, sort_keys=True, ensure_ascii=False),
         ),
     )
-    connection.commit()
     return int(cursor.lastrowid or 0)
 
 
