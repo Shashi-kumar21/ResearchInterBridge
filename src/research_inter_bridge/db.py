@@ -54,6 +54,59 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX IF NOT EXISTS idx_audit_events_action ON audit_events (action)",
         ),
     ),
+    Migration(
+        version=2,
+        name="users_profiles_facts",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS student_profiles (
+                user_id INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+                full_name TEXT NOT NULL,
+                preferred_name TEXT,
+                contact_email TEXT NOT NULL,
+                phone TEXT,
+                institution TEXT,
+                department TEXT,
+                country TEXT,
+                degree_type TEXT,
+                current_year INTEGER,
+                expected_graduation TEXT,
+                gpa REAL,
+                gpa_scale REAL,
+                coursework_json TEXT NOT NULL DEFAULT '[]',
+                skills_json TEXT NOT NULL DEFAULT '[]',
+                research_keywords_json TEXT NOT NULL DEFAULT '[]',
+                target_countries_json TEXT NOT NULL DEFAULT '[]',
+                internship_start TEXT,
+                internship_end TEXT,
+                funding_required INTEGER,
+                consent_given_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS profile_facts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                field TEXT NOT NULL,
+                value TEXT NOT NULL,
+                source TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('pending', 'confirmed', 'rejected')),
+                confidence REAL,
+                created_at TEXT NOT NULL,
+                UNIQUE (user_id, field, value, source)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_profile_facts_user ON profile_facts (user_id, status)",
+        ),
+    ),
 )
 
 
@@ -61,6 +114,25 @@ def utc_now() -> str:
     """Return the current UTC time as an ISO-8601 string with microseconds."""
 
     return datetime.now(UTC).isoformat(timespec="microseconds")
+
+
+@contextmanager
+def transaction(connection: sqlite3.Connection) -> Iterator[None]:
+    """Run a block inside an explicit ``BEGIN IMMEDIATE`` transaction.
+
+    Connections are opened in autocommit mode, so callers that must keep a state
+    change and its audit row atomic use this context manager. It must not be used
+    when the caller already holds a transaction.
+    """
+
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        connection.execute("ROLLBACK")
+        raise
+    else:
+        connection.execute("COMMIT")
 
 
 def validate_migrations(migrations: Sequence[Migration] = MIGRATIONS) -> None:

@@ -65,6 +65,7 @@ src/research_inter_bridge/    package
   logging.py                  mandatory credential redaction (filter + formatter)
   db.py                       SQLite connection, read-only probe, migrations, audit
   health.py                   read-only readiness checks
+  profiles.py                 student profile model, validation, per-user storage, facts
   cli.py / __main__.py        migrate + health commands
 tests/                        pytest suite (offline, synthetic data only)
 docs/                         audit report, decisions, architecture notes

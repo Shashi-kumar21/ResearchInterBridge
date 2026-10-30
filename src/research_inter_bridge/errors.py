@@ -20,3 +20,14 @@ class MigrationError(ResearchInterBridgeError):
 
 class HealthCheckError(ResearchInterBridgeError):
     """Raised when a health check cannot be executed at all."""
+
+
+class ProfileError(ResearchInterBridgeError):
+    """Raised when a student profile is invalid.
+
+    The message must name the offending field and what a valid value looks like.
+    """
+
+
+class ProfileNotFoundError(ProfileError):
+    """Raised when a profile is requested for a user id that has none."""
