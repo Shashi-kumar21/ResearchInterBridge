@@ -63,7 +63,8 @@ feat/x --PR--> dev --release PR--> main --Owner merges--> tag
 
 ## 5. Conventions
 
-* Python >= 3.11, `src/` layout, type hints on public functions.
+* Python >= 3.11 (see `docs/decisions.md` ADR-001; `task.md` §0's 3.10.x is
+  superseded), `src/` layout, type hints on public functions.
 * Errors: explicit exceptions with actionable messages; no bare `except:`.
 * Never log message bodies, tokens or file contents at INFO.
 * New dependency needs a justification in the PR.

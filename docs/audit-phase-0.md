@@ -97,28 +97,30 @@ Available subcommands: `daemon`, `listagents`, `sendmessage`, `new`, `read`,
 `kill`, `attach`, `log`, `ping`, `version`. No `tasks`/`assign` command exists,
 so handoffs are plain messages plus PR comments.
 
-## 7. Conflicts found (need an Owner decision)
+## 7. Conflicts found — resolved 2026-10-30
 
-1. **Python version.** `task.md` §0 states "Python compatibility: Python
-   3.10.x", while `pyproject.toml` and `AGENTS.md` require `>=3.11` and CI runs
-   3.12, and the machine's default `python` is 3.10.11. The foundation slice is
-   written to run on both 3.10 and 3.11+ (the suite passes on both), and one
-   `# noqa: UP017` documents the `datetime.UTC` (3.11-only) avoidance. Choose
-   one and I will align `requires-python`, the Ruff `target-version` and CI.
-2. **CI dependency install.** CI currently installs only `pytest`; any future
-   third-party dependency requires adding `pip install -e .` to both jobs so
-   the four required check names stay unchanged.
-3. **Quality gates beyond `AGENTS.md`.** `AGENTS.md` §4 does not require
-   `ruff format`; `task.md` §8 does not mention it either, but CI enforces
-   `ruff format --check .`. The DoD in `AGENTS.md` should list it (it already
-   is listed in my checklist below).
-4. **Frontend stack.** `task.md` §3 suggests Next.js + TypeScript if no UI
-   exists. Nothing exists yet; a backend-first approach keeps CI offline and
-   fast. Confirm before Phase 10.
-5. **Gmail/Outlook credentials.** No Google Cloud project, OAuth client or
-   Workspace policy answer is available yet. Phase 7 will ship mocked provider
-   adapters and a manual test script; real OAuth needs the Owner to create the
-   client and provide `RIB_GOOGLE_OAUTH_CLIENT_ID`/`_SECRET` in `.env`.
+Decisions are recorded in `docs/decisions.md`; this section keeps the original
+finding so the history stays auditable.
+
+1. **Python version — RESOLVED (ADR-001).** `task.md` §0 says 3.10.x;
+   `pyproject.toml`, `AGENTS.md` §5 and CI say 3.11+/3.12. Floor is **3.11**;
+   `task.md` §0 is superseded, `datetime.UTC` is now used (the `# noqa: UP017`
+   workaround is gone) and CI gained an additive `test-python311` job.
+   Local runs use `py -3.11` because the machine default is 3.10.11.
+2. **CI dependency install — OPEN, by design.** CI installs only `pytest` today
+   because there is no runtime dependency. The first third-party dependency must
+   add `pip install -e .` to every job while keeping the four required check
+   names unchanged.
+3. **Quality gates — CORRECTION.** `AGENTS.md` §4 *does* already require
+   `ruff format --check .`; my original audit note was wrong. No change needed.
+4. **Frontend stack — RESOLVED (ADR-002).** Backend-first until Phase 10.
+5. **`task.md` visibility — RESOLVED (ADR-003).** The specification is committed
+   so the QA worktree can read it.
+6. **Gmail/Outlook credentials — BLOCKED (ADR-006).** No Google Cloud project,
+   OAuth client or Workspace policy answer yet. Phase 7 ships mocked adapters
+   first; live connect needs `RIB_GOOGLE_OAUTH_CLIENT_ID`/`_SECRET` in `.env`
+   supplied by the Owner. No secret will be committed, logged or sent over the
+   bridge.
 
 ## 8. Prioritised plan and current progress
 
@@ -165,7 +167,7 @@ fix-forward. Status of each finding:
 | m1 `migrate` raw traceback on bad path | **fixed** — catches `sqlite3.Error`, prints `migration failed: ...`, exit 1 |
 | m2 dead `RIB_REDACT_LOGS` knob | **fixed** — env var removed; `redact_logs` is a non-init constant |
 | n1 per-handler filter is bypassable | **fixed** — redacting formatter installed by `configure_logging` |
-| m3 health check mutates the DB | deferred to Phase 2 (`CREATE TABLE IF NOT EXISTS` in `current_version`) |
+| m3 health check mutates the DB | **fixed** — `db.connect_readonly` (`mode=ro`) + `db.schema_version`; regression test asserts no tables are created |
 | m4 unquoted multi-word secret partially masked | documented limitation in `logging.py`; quoted values are redacted fully |
 | n2 absolute DB path in health JSON | deferred; do not reuse the payload for an HTTP probe |
-| n3 CI tests only 3.12 | blocked on the Python-baseline decision (§7 item 1) |
+| n3 CI tests only 3.12 | **fixed** — additive `test-python311` job (required check names unchanged) |
