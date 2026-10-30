@@ -1,4 +1,9 @@
-"""Health checks used by the CLI, CI smoke tests and future readiness probes."""
+"""Health checks used by the CLI, CI smoke tests and future readiness probes.
+
+A health check is a *probe*: it must never create tables, change the journal
+mode or otherwise write to the database (QA m3). It therefore opens the file
+read-only and only reports what it can observe.
+"""
 
 from __future__ import annotations
 
@@ -34,7 +39,7 @@ class HealthReport:
 
 
 def check_health(settings: Settings) -> HealthReport:
-    """Verify the database is reachable and migrated to the latest version."""
+    """Verify the database is readable and migrated to the latest version."""
 
     path = Path(settings.resolved_database_path)
     expected = db.latest_version()
@@ -43,14 +48,19 @@ def check_health(settings: Settings) -> HealthReport:
     version = 0
 
     try:
-        with db.session(path) as connection:
+        connection = db.connect_readonly(path)
+    except (sqlite3.Error, OSError) as exc:
+        details["database_error"] = str(exc)
+        checks["database_reachable"] = False
+    else:
+        try:
             connection.execute("SELECT 1")
             checks["database_reachable"] = True
-            version = db.current_version(connection)
-    except sqlite3.Error as exc:
-        details["database_error"] = str(exc)
-    except OSError as exc:
-        details["filesystem_error"] = str(exc)
+            version = db.schema_version(connection)
+        except sqlite3.Error as exc:
+            details["database_error"] = str(exc)
+        finally:
+            connection.close()
 
     if checks["database_reachable"]:
         checks["schema_current"] = version >= expected
