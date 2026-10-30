@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -69,7 +70,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     target_type="schema",
                     target_id=str(version),
                 )
-        except (MigrationError, OSError) as exc:
+        except (MigrationError, OSError, sqlite3.Error) as exc:
             print(f"migration failed: {exc}", file=sys.stderr)
             return 1
         print(json.dumps({"schema_version": version}, indent=2))

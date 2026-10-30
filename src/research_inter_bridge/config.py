@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .errors import ConfigError
@@ -24,9 +24,6 @@ LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 DEFAULT_DATABASE_PATH = Path("data") / "research_inter_bridge.db"
 DEFAULT_LOG_LEVEL = "INFO"
-
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
 
 def _setting_name(key: str) -> str:
@@ -40,15 +37,15 @@ class Settings:
     Attributes:
         database_path: SQLite file used for all persistent state.
         log_level: One of :data:`LOG_LEVELS`.
-        redact_logs: Always ``True`` in shipped builds; kept explicit so the
-            behaviour is testable and cannot be silently disabled.
+        redact_logs: Always ``True``. Redaction is a safety invariant, not an
+            option: there is deliberately no environment variable for it.
         request_timeout_seconds: Default timeout for outbound HTTP adapters.
         data_directory: Directory that must stay outside version control.
     """
 
     database_path: Path = DEFAULT_DATABASE_PATH
     log_level: str = DEFAULT_LOG_LEVEL
-    redact_logs: bool = True
+    redact_logs: bool = field(default=True, init=False)
     request_timeout_seconds: float = 15.0
     data_directory: Path = Path("data")
 
@@ -83,7 +80,6 @@ class Settings:
         return cls(
             database_path=Path(_read_text(source, "DATABASE_PATH", str(DEFAULT_DATABASE_PATH))),
             log_level=_read_text(source, "LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
-            redact_logs=_read_bool(source, "REDACT_LOGS", default=True),
             request_timeout_seconds=_read_float(source, "REQUEST_TIMEOUT_SECONDS", 15.0),
             data_directory=Path(_read_text(source, "DATA_DIRECTORY", "data")),
         )
@@ -100,19 +96,6 @@ def _read_raw(env: Mapping[str, str], key: str) -> str | None:
 def _read_text(env: Mapping[str, str], key: str, default: str) -> str:
     value = _read_raw(env, key)
     return default if value is None else value
-
-
-def _read_bool(env: Mapping[str, str], key: str, *, default: bool) -> bool:
-    value = _read_raw(env, key)
-    if value is None:
-        return default
-    lowered = value.lower()
-    if lowered in _TRUE_VALUES:
-        return True
-    if lowered in _FALSE_VALUES:
-        return False
-    name = _setting_name(key)
-    raise ConfigError(f"{name} must be a boolean (true/false, yes/no, 1/0); got {value!r}.")
 
 
 def _read_float(env: Mapping[str, str], key: str, default: float) -> float:

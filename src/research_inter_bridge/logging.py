@@ -2,11 +2,27 @@
 
 Rules enforced here (see task specification section 5):
 
-* OAuth tokens, passwords, API keys and cookies are replaced by ``[REDACTED]``
-  before a record reaches any handler.
+* OAuth tokens, passwords, API keys, cookies and HTTP authorization values are
+  replaced by ``[REDACTED]`` before a record reaches any handler **or any
+  formatter**, including exception tracebacks.
 * Message bodies, email contents and uploaded file contents must never be
   logged at ``INFO`` or below; callers pass identifiers instead. The
   :func:`log_safe` helper makes that intent explicit.
+
+Redaction happens twice on purpose:
+
+1. :class:`RedactionFilter` rewrites ``record.msg`` so other filters/handlers
+   added in the future see the cleaned message (QA nit n1).
+2. :class:`RedactingFormatter` runs :func:`redact` over the *fully formatted*
+   output, which is the only place ``exc_info``/tracebacks become text (QA M1).
+   Use it (or :func:`configure_logging`) for every handler.
+
+Known limitation (tracked, not a regression): an *unquoted* multi-word secret
+survives partially - ``api_key=two words`` masks ``two`` and leaves ``words``.
+Secret values containing spaces must be logged quoted (``api_key='two words'``)
+or as structured fields through :func:`log_safe`. Widening the bare-value rule
+would let a match swallow the following ``key=`` on the same line, which is the
+bug that made QA finding M2/M3 worse than no redaction.
 """
 
 from __future__ import annotations
@@ -26,15 +42,46 @@ _SENSITIVE_KEY_RE = re.compile(
     r"(?i)(token|secret|password|passwd|api[-_]?key|auth|authorization|cookie|credential|session[-_]?id)"
 )
 
-# ``key=value`` / ``key: value`` pairs where the key looks sensitive.
+# A key containing a sensitive word, optionally quoted (JSON / dict repr), with
+# arbitrary prefix/suffix such as ``access_token`` or ``X-Api-Key``. Building the
+# key pattern from the sensitive words means non-sensitive pairs are never
+# matched, so a match can never swallow the next ``key=`` on the same line.
+_SENSITIVE_KEY_PATTERN = (
+    r"(?i:[\"']?(?:[A-Za-z0-9_.\-\[\]]*"
+    r"(?:token|secret|password|passwd|api[-_]?key|auth|cookie|credential|session[-_]?id)"
+    r"[A-Za-z0-9_.\-\[\]]*)[\"']?)"
+)
+
+# ``key=value`` / ``key: value`` / ``"key": "value"`` pairs. Values may be quoted
+# or a bare token; an unquoted value stops at whitespace (see module docstring
+# for the known limitation).
 _KV_RE = re.compile(
-    r"(?P<key>[A-Za-z0-9_.\-\[\]]+)(?P<sep>\s*[=:]\s*)"
-    r"(?P<value>\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,;&]+)"
+    r"(?P<key>" + _SENSITIVE_KEY_PATTERN + r")"
+    r"(?P<sep>\s*[=:]\s*)"
+    r"(?P<value>\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,;&}]+)"
+)
+
+# ``Authorization: Basic <base64>`` style values: the credential is the token
+# after the scheme, so match the pair before the generic rule can redact only
+# the scheme word and leave the secret behind (QA M2).
+_AUTH_VALUE_RE = re.compile(
+    r"(?P<key>" + _SENSITIVE_KEY_PATTERN + r")"
+    r"(?P<sep>\s*[=:]\s*)"
+    r"(?P<scheme>(?i:bearer|basic|digest|negotiate|token))"
+    r"\s+(?P<credential>[^\s,;&}]+)"
+)
+
+# ``Basic <base64>`` / ``Digest <base64>`` logged without its header key. The
+# lookahead requires a digit or base64 padding so ordinary prose such as
+# "basic configuration" is left alone.
+_AUTH_SCHEME_RE = re.compile(
+    r"(?i)\b(?:basic|digest|negotiate)\s+(?=[A-Za-z0-9+/]*[0-9=])[A-Za-z0-9+/=]{12,}"
 )
 
 # Well-known credential shapes that may appear without a key.
 _TOKEN_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-~+/]{8,}=*"),
+    _AUTH_SCHEME_RE,
     re.compile(r"\bya29\.[A-Za-z0-9._\-]{10,}"),  # Google OAuth access token
     re.compile(r"\b1//[A-Za-z0-9._\-]{10,}"),  # Google OAuth refresh token
     re.compile(r"\beyJ[A-Za-z0-9._\-]{10,}"),  # JWT (header fragment)
@@ -51,12 +98,20 @@ def _replace_value(match: re.Match[str]) -> str:
     return f"{key}{match.group('sep')}{REDACTED if value else value}"
 
 
+def _replace_auth_value(match: re.Match[str]) -> str:
+    key = match.group("key")
+    if not _SENSITIVE_KEY_RE.search(key):
+        return match.group(0)
+    return f"{key}{match.group('sep')}{REDACTED}"
+
+
 def redact(text: str) -> str:
     """Return ``text`` with credential-looking substrings masked."""
 
     if not text:
         return text
-    redacted = _KV_RE.sub(_replace_value, text)
+    redacted = _AUTH_VALUE_RE.sub(_replace_auth_value, text)
+    redacted = _KV_RE.sub(_replace_value, redacted)
     for pattern in _TOKEN_PATTERNS:
         redacted = pattern.sub(REDACTED, redacted)
     return redacted
@@ -88,7 +143,7 @@ def redact_mapping(values: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class RedactionFilter(logging.Filter):
-    """Logging filter that redacts credentials from the fully formatted message."""
+    """Logging filter that redacts credentials from the formatted message."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
@@ -100,8 +155,23 @@ class RedactionFilter(logging.Filter):
         return True
 
 
+class RedactingFormatter(logging.Formatter):
+    """Formatter whose final output (message, traceback, stack) is redacted.
+
+    ``Formatter.format`` appends ``formatException`` output, so this is the only
+    reliable place to catch credentials inside tracebacks.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact(super().format(record))
+
+
 def configure_logging(level: str = "INFO", stream: TextIO | None = None) -> None:
-    """Configure the root logger once, with redaction attached to every handler."""
+    """Configure the root logger once, with redaction attached to every handler.
+
+    Redaction cannot be disabled: both the filter and the redacting formatter are
+    installed unconditionally.
+    """
 
     root = logging.getLogger()
     for handler in list(root.handlers):
@@ -109,7 +179,7 @@ def configure_logging(level: str = "INFO", stream: TextIO | None = None) -> None
         handler.close()
 
     handler = logging.StreamHandler(stream or sys.stderr)
-    handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
+    handler.setFormatter(RedactingFormatter(LOG_FORMAT, DATE_FORMAT))
     handler.addFilter(RedactionFilter())
     root.addHandler(handler)
     root.setLevel(level.upper())

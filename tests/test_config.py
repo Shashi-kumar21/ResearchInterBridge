@@ -28,7 +28,6 @@ def test_from_env_reads_prefixed_values_only() -> None:
         {
             "RIB_DATABASE_PATH": "tmp/custom.db",
             "RIB_LOG_LEVEL": "debug",
-            "RIB_REDACT_LOGS": "false",
             "RIB_REQUEST_TIMEOUT_SECONDS": "2.5",
             "RIB_DATA_DIRECTORY": "tmp",
             "DATABASE_PATH": "ignored.db",
@@ -37,7 +36,6 @@ def test_from_env_reads_prefixed_values_only() -> None:
 
     assert settings.database_path == Path("tmp/custom.db")
     assert settings.log_level == "DEBUG"
-    assert settings.redact_logs is False
     assert settings.request_timeout_seconds == 2.5
     assert settings.data_directory == Path("tmp")
 
@@ -59,9 +57,12 @@ def test_invalid_log_level_names_the_setting_and_allowed_values(value: str) -> N
     assert "DEBUG" in message
 
 
-def test_invalid_boolean_is_rejected() -> None:
-    with pytest.raises(ConfigError, match="RIB_REDACT_LOGS"):
-        Settings.from_env({"RIB_REDACT_LOGS": "maybe"})
+def test_redaction_cannot_be_disabled_by_environment() -> None:
+    settings = Settings.from_env({"RIB_REDACT_LOGS": "false", "RIB_REDACT_LOGS ": "0"})
+
+    assert settings.redact_logs is True
+    with pytest.raises(TypeError):
+        Settings(redact_logs=False)  # type: ignore[call-arg]
 
 
 def test_invalid_timeout_is_rejected() -> None:

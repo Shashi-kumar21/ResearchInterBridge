@@ -81,6 +81,21 @@ def test_cli_reports_configuration_error(tmp_path: Path, monkeypatch, capsys) ->
     assert "RIB_LOG_LEVEL" in captured.err
 
 
+def test_cli_migrate_reports_unusable_path_without_traceback(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("RIB_DATABASE_PATH", str(blocker / "app.db"))
+
+    exit_code = main(["--env-file", str(tmp_path / "absent.env"), "migrate"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert captured.err.startswith("migration failed:")
+    assert "Traceback" not in captured.err
+
+
 def test_cli_migrate_records_audit_event(tmp_path: Path, monkeypatch, capsys) -> None:
     database_path = tmp_path / "env.db"
     monkeypatch.setenv("RIB_DATABASE_PATH", str(database_path))

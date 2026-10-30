@@ -150,3 +150,22 @@ service exists.
   services that own them.
 * Nothing sends email, calls a scholarly API or touches OAuth, so no
   approval/policy bypass is possible yet.
+
+## 10. QA follow-up status (PR #1 review, `fix/phase-1-qa-findings`)
+
+PR #1 was merged before a verdict was posted, so the review arrived as
+fix-forward. Status of each finding:
+
+| Finding | Status |
+| --- | --- |
+| M1 tracebacks bypass redaction | **fixed** — `RedactingFormatter` redacts the final formatted output, incl. `exc_info`; matrix tests cover the exception channel |
+| M2 `Authorization: Basic <base64>` leaks | **fixed** — auth-scheme value rule + scheme pattern; Basic/Digest/Bearer tested |
+| M3 JSON / dict-repr keys bypass | **fixed** — keys may be quoted; test matrix covers JSON, indented JSON and dict repr |
+| M4 audit event commits caller transaction | **fixed** — `record_audit_event` no longer commits; rollback removes both rows |
+| m1 `migrate` raw traceback on bad path | **fixed** — catches `sqlite3.Error`, prints `migration failed: ...`, exit 1 |
+| m2 dead `RIB_REDACT_LOGS` knob | **fixed** — env var removed; `redact_logs` is a non-init constant |
+| n1 per-handler filter is bypassable | **fixed** — redacting formatter installed by `configure_logging` |
+| m3 health check mutates the DB | deferred to Phase 2 (`CREATE TABLE IF NOT EXISTS` in `current_version`) |
+| m4 unquoted multi-word secret partially masked | documented limitation in `logging.py`; quoted values are redacted fully |
+| n2 absolute DB path in health JSON | deferred; do not reuse the payload for an HTTP probe |
+| n3 CI tests only 3.12 | blocked on the Python-baseline decision (§7 item 1) |
