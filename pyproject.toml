@@ -1,8 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "research-inter-bridge"
 version = "0.1.0"
 description = "ResearchInterBridge"
 requires-python = ">=3.11"
+# Document ingestion (Phase 2b). Both are BSD/MIT licensed and ship wheels for
+# CPython 3.11-3.13 on every CI platform, so the suite stays installable.
+dependencies = [
+    "pymupdf>=1.24",
+    "python-docx>=1.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.ruff]
 line-length = 100

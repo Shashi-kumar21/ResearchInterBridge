@@ -477,8 +477,8 @@ per-account ceiling and warm-up state live on
 `connected_email_accounts` (columns, not a new entity).
 
 Naming note: `confirmed_profile_facts` is implemented as the confirmed
-subset of `profile_facts` (`status = 'confirmed'`). Phase 3 adds a
-read-only `confirmed_profile_facts` view over it, so the name used here is
+subset of `profile_facts` (`status = 'confirmed'`). Migration 3 (Phase 2b)
+adds a read-only `confirmed_profile_facts` view over it, so the name used here is
 backed by a real database object without a data migration.
 
 ## 8. Security, Privacy and Responsible Use

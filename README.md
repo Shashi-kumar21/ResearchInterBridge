@@ -4,8 +4,9 @@ Local-first assistant that helps students find international research
 internships, identify relevant professors and papers, prepare evidence-backed
 outreach, and send approved email through connected accounts.
 
-Status: **Phase 1 — foundation**. Research discovery, OAuth and sending are not
-implemented yet. Nothing in this repository can send email.
+Status: **Phase 2 — auth, profile and documents**. Profiles, document ingestion
+(PDF/DOCX/TXT) and candidate-fact extraction work; research discovery, OAuth and
+sending are not implemented yet. Nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
 * Team workflow: `AGENTS.md`.
@@ -16,14 +17,15 @@ implemented yet. Nothing in this repository can send email.
 
 * **Python 3.11+** (see `docs/decisions.md` ADR-001). On this machine the
   default `python` is 3.10.11, so use `py -3.11` for the suite.
-* No third-party runtime dependency yet: configuration, logging, SQLite access
-  and the health check use the standard library only. CI needs `pytest` only.
+* Runtime dependencies: `pymupdf` (PDF text) and `python-docx` (DOCX text),
+  installed with `pip install -e .`. Configuration, logging, SQLite access and
+  the health check still use the standard library only.
 
 ## Setup (PowerShell)
 
 ```powershell
 Set-Location "C:\Users\shash\new_project\ResearchInterBridge"
-py -3.11 -m pip install pytest
+py -3.11 -m pip install -e . pytest
 python -m pip install ruff        # Ruff is a standalone binary; any Python works
 Copy-Item .env.example .env       # optional; every value has a safe default
 ```
@@ -38,6 +40,9 @@ code or commits.
 $env:PYTHONPATH = "src"           # or: py -3.11 -m pip install -e .
 py -3.11 -m research_inter_bridge migrate
 py -3.11 -m research_inter_bridge health
+py -3.11 -m research_inter_bridge user-create
+py -3.11 -m research_inter_bridge document-add --user-id 1 --file .\cv.pdf --parse
+py -3.11 -m research_inter_bridge document-list --user-id 1
 ```
 
 `migrate` creates or upgrades the SQLite schema and writes an audit event.
@@ -45,6 +50,13 @@ py -3.11 -m research_inter_bridge health
 unreadable or behind on migrations, so it can be used as a readiness probe. The
 probe opens the database **read-only**: a health check never creates tables or
 changes the file.
+
+`document-add` validates the real content (not the extension), stores the file
+under `data/documents/user_<id>/<hash>.<ext>` with a `0600` mode where the OS
+supports it, and `--parse` extracts text plus candidate facts. Extracted facts are
+`pending` until the student confirms them; only `confirmed` facts may ever appear
+in an email. Scanned PDFs are rejected with an "OCR not available yet" message
+rather than silently producing nothing.
 
 ## Checks
 
@@ -66,7 +78,10 @@ src/research_inter_bridge/    package
   db.py                       SQLite connection, read-only probe, migrations, audit
   health.py                   read-only readiness checks
   profiles.py                 student profile model, validation, per-user storage, facts
-  cli.py / __main__.py        migrate + health commands
+  documents.py                upload validation, hash-named storage, per-user isolation
+  parsing.py                  PDF/DOCX/TXT text extraction with bounded limits
+  facts.py                    deterministic fact extraction (pending until confirmed)
+  cli.py / __main__.py        migrate, health, user-create and document commands
 tests/                        pytest suite (offline, synthetic data only)
 docs/                         audit report, decisions, architecture notes
 ```

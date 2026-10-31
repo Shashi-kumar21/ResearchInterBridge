@@ -32,7 +32,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pytest
+      # Installed (not just pytest) because the app now has real dependencies
+      # (PyMuPDF, python-docx) that the parsing tests exercise.
+      - run: pip install -e . pytest
       - run: python -m pytest
 
   # Declared floor in pyproject.toml is >=3.11; this job proves it. The job name
@@ -44,5 +46,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install pytest
+      # Installed (not just pytest) because the app now has real dependencies
+      # (PyMuPDF, python-docx) that the parsing tests exercise.
+      - run: pip install -e . pytest
       - run: python -m pytest
