@@ -366,3 +366,28 @@ def test_fact_confidence_must_be_a_probability(connection: sqlite3.Connection) -
 def test_set_fact_status_rejects_unknown_status(connection: sqlite3.Connection) -> None:
     with pytest.raises(ProfileError, match="confirmed or rejected"):
         set_fact_status(connection, fact_id=1, user_id=1, status="pending")
+
+
+def test_confirmed_profile_facts_view_exposes_only_confirmed_rows(
+    connection: sqlite3.Connection,
+) -> None:
+    user_id = create_user(connection)
+    save_profile(connection, _profile(user_id), actor="student:1")
+    add_profile_fact(
+        connection, user_id=user_id, field_name="gpa", value="8.9/10", source="document:1"
+    )
+    confirmed_id = add_profile_fact(
+        connection,
+        user_id=user_id,
+        field_name="contact_email",
+        value="asha@example.edu",
+        source="document:1",
+        status="confirmed",
+    )
+
+    rows = connection.execute(
+        "SELECT id, field, value FROM confirmed_profile_facts WHERE user_id = ?", (user_id,)
+    ).fetchall()
+
+    assert [row["id"] for row in rows] == [confirmed_id]
+    assert rows[0]["field"] == "contact_email"

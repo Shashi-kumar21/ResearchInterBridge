@@ -31,3 +31,27 @@ class ProfileError(ResearchInterBridgeError):
 
 class ProfileNotFoundError(ProfileError):
     """Raised when a profile is requested for a user id that has none."""
+
+
+class DocumentError(ResearchInterBridgeError):
+    """Raised when an uploaded document is rejected or cannot be used.
+
+    The message must name the reason (extension, content, size, ownership) and
+    never include document text.
+    """
+
+
+class UnsupportedDocumentError(DocumentError):
+    """Raised when a file is not an accepted PDF/DOCX/TXT document."""
+
+
+class DocumentTooLargeError(DocumentError):
+    """Raised when a file exceeds the configured size limit."""
+
+
+class DocumentNotFoundError(DocumentError):
+    """Raised when a document id does not exist for the requesting user."""
+
+
+class DocumentParsingError(DocumentError):
+    """Raised when an accepted document cannot be converted to text."""

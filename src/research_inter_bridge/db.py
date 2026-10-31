@@ -107,6 +107,39 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX IF NOT EXISTS idx_profile_facts_user ON profile_facts (user_id, status)",
         ),
     ),
+    Migration(
+        version=3,
+        name="student_documents",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS student_documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK (kind IN ('cv', 'transcript', 'other')),
+                display_name TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                extension TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+                sha256 TEXT NOT NULL,
+                storage_path TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'stored'
+                    CHECK (status IN ('stored', 'parsed', 'failed')),
+                parse_error TEXT,
+                uploaded_at TEXT NOT NULL,
+                parsed_at TEXT,
+                UNIQUE (user_id, sha256)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_student_documents_user "
+            "ON student_documents (user_id, kind)",
+            """
+            CREATE VIEW IF NOT EXISTS confirmed_profile_facts AS
+            SELECT id, user_id, field, value, source, confidence, created_at
+            FROM profile_facts
+            WHERE status = 'confirmed'
+            """,
+        ),
+    ),
 )
 
 
