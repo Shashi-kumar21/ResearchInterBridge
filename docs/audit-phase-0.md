@@ -171,3 +171,19 @@ fix-forward. Status of each finding:
 | m4 unquoted multi-word secret partially masked | documented limitation in `logging.py`; quoted values are redacted fully |
 | n2 absolute DB path in health JSON | deferred; do not reuse the payload for an HTTP probe |
 | n3 CI tests only 3.12 | **fixed** — additive `test-python311` job (required check names unchanged) |
+
+## 11. Superseded by the 2026-10-31 spec rewrite (do not re-litigate)
+
+The Owner rewrote `task.md` into a hosted-product spec (v2, 15 sections, phases
+0–13). Two §7 conflict resolutions from this audit are retired:
+
+| Old resolution | Now |
+| --- | --- |
+| §7.1 Python 3.10 vs 3.11 | still **3.11 minimum**, but the waiver is now explicit in `task.md` §2 (ADR-009): Python 3.10 reached end-of-life 2026-10-01 |
+| §7.4 frontend deferred to Phase 10 | **retired** by ADR-010: Next.js + TypeScript starts with Phase 2 and grows with the backend |
+
+The phase numbering in §8 above is the old 11-phase plan. `task.md` §9 (13
+phases) is authoritative; the mapping is: old 3 → new 4, old 4 → new 5, old 5 →
+new 6, old 6 → new 8, old 7 → new 9, old 8 → new 10, old 9 → new 11, old 10 →
+new 12, old 11 → new 13. New phases 3 (documents/CV facts) and 7 (CV
+optimization) have no predecessor.
