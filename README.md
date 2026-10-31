@@ -43,6 +43,9 @@ py -3.11 -m research_inter_bridge health
 py -3.11 -m research_inter_bridge user-create
 py -3.11 -m research_inter_bridge document-add --user-id 1 --file .\cv.pdf --parse
 py -3.11 -m research_inter_bridge document-list --user-id 1
+py -3.11 -m research_inter_bridge fact-list --user-id 1
+py -3.11 -m research_inter_bridge fact-confirm --user-id 1 --fact-id 3 --value "9.1/10"
+py -3.11 -m research_inter_bridge fact-apply --user-id 1
 ```
 
 `migrate` creates or upgrades the SQLite schema and writes an audit event.
@@ -57,6 +60,14 @@ supports it, and `--parse` extracts text plus candidate facts. Extracted facts a
 `pending` until the student confirms them; only `confirmed` facts may ever appear
 in an email. Scanned PDFs are rejected with an "OCR not available yet" message
 rather than silently producing nothing.
+
+`fact-list` groups candidates per field and marks `has_conflict: true` when two
+documents disagree, so the student picks the right value instead of one silently
+winning. `fact-confirm` accepts a correction (`--value`), and confirming one
+candidate rejects the competing pending ones for that field. `fact-apply` copies
+confirmed facts into the profile: blank fields are filled, values the student
+typed are kept unless `--overwrite` is passed. Graduation **year** facts are
+never turned into a date, because that would invent a day and month.
 
 ## Checks
 
@@ -80,7 +91,7 @@ src/research_inter_bridge/    package
   profiles.py                 student profile model, validation, per-user storage, facts
   documents.py                upload validation, hash-named storage, per-user isolation
   parsing.py                  PDF/DOCX/TXT text extraction with bounded limits
-  facts.py                    deterministic fact extraction (pending until confirmed)
+  facts.py                    fact extraction + confirm/reject/conflict workflow
   cli.py / __main__.py        migrate, health, user-create and document commands
 tests/                        pytest suite (offline, synthetic data only)
 docs/                         audit report, decisions, architecture notes

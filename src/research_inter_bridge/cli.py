@@ -19,9 +19,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from . import db, documents, parsing, profiles
+from . import db, documents, facts, parsing, profiles
 from .config import Settings, load_settings
-from .errors import ConfigError, DocumentError, MigrationError
+from .errors import ConfigError, DocumentError, MigrationError, ProfileError
 from .health import check_health
 from .logging import configure_logging, get_logger
 
@@ -72,6 +72,30 @@ def _build_parser() -> argparse.ArgumentParser:
 
     users = subparsers.add_parser("user-create", help="Create an empty local user.")
     users.add_argument("--json", action="store_true", help="Emit JSON (already the default).")
+
+    fact_list = subparsers.add_parser("fact-list", help="Show facts awaiting confirmation.")
+    fact_list.add_argument("--user-id", type=int, required=True)
+
+    fact_confirm = subparsers.add_parser("fact-confirm", help="Confirm one extracted fact.")
+    fact_confirm.add_argument("--user-id", type=int, required=True)
+    fact_confirm.add_argument("--fact-id", type=int, required=True)
+    fact_confirm.add_argument(
+        "--value", help="Corrected value to store instead of the extracted one."
+    )
+
+    fact_reject = subparsers.add_parser("fact-reject", help="Reject one extracted fact.")
+    fact_reject.add_argument("--user-id", type=int, required=True)
+    fact_reject.add_argument("--fact-id", type=int, required=True)
+
+    fact_apply = subparsers.add_parser(
+        "fact-apply", help="Copy confirmed facts into the student profile."
+    )
+    fact_apply.add_argument("--user-id", type=int, required=True)
+    fact_apply.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace values the student already typed (default: only fill blanks).",
+    )
     return parser
 
 
@@ -132,6 +156,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         except (OSError, sqlite3.Error) as exc:
             print(f"document operation failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command.startswith("fact-"):
+        try:
+            return _run_fact_command(args, settings)
+        except ProfileError as exc:
+            print(f"fact error: {exc}", file=sys.stderr)
+            return 1
+        except (OSError, sqlite3.Error) as exc:
+            print(f"fact operation failed: {exc}", file=sys.stderr)
             return 1
 
     report = check_health(settings)
@@ -211,3 +245,65 @@ def _run_document_command(args: argparse.Namespace, settings: Settings) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - exercised via __main__ module
     raise SystemExit(main())
+
+
+def _run_fact_command(args: argparse.Namespace, settings: Settings) -> int:
+    """Run one fact subcommand; profile/fact errors are handled by the caller."""
+
+    with db.session(settings.database_path) as connection:
+        db.apply_migrations(connection)
+        actor = f"student:{args.user_id}"
+
+        if args.command == "fact-list":
+            groups = [
+                {
+                    "field": group.field_name,
+                    "has_conflict": group.has_conflict,
+                    "pending": [
+                        {
+                            "id": candidate.id,
+                            "value": candidate.value,
+                            "source": candidate.source,
+                            "confidence": candidate.confidence,
+                        }
+                        for candidate in group.pending
+                    ],
+                    "confirmed": [
+                        {"id": candidate.id, "value": candidate.value}
+                        for candidate in group.confirmed
+                    ],
+                }
+                for group in facts.fact_groups(connection, args.user_id)
+            ]
+            print(json.dumps({"fields": groups}, indent=2))
+            return 0
+
+        if args.command == "fact-confirm":
+            confirmed = facts.confirm_fact(
+                connection,
+                user_id=args.user_id,
+                fact_id=args.fact_id,
+                actor=actor,
+                corrected_value=args.value,
+            )
+            if not confirmed:
+                print(f"fact error: fact {args.fact_id} does not exist.", file=sys.stderr)
+                return 1
+            print(json.dumps({"confirmed": args.fact_id}, indent=2))
+            return 0
+
+        if args.command == "fact-reject":
+            rejected = facts.reject_fact(
+                connection, user_id=args.user_id, fact_id=args.fact_id, actor=actor
+            )
+            if not rejected:
+                print(f"fact error: fact {args.fact_id} does not exist.", file=sys.stderr)
+                return 1
+            print(json.dumps({"rejected": args.fact_id}, indent=2))
+            return 0
+
+        applied = facts.apply_confirmed_facts_to_profile(
+            connection, user_id=args.user_id, actor=actor, overwrite=args.overwrite
+        )
+        print(json.dumps({"applied": list(applied)}, indent=2))
+        return 0
