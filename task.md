@@ -42,8 +42,12 @@ limitations.
 -   Backend: existing Python application and framework; preserve
     reusable modules. FastAPI may be used for new APIs if the audit
     justifies it.
--   Python 3.10.x compatibility must be preserved unless a migration is
-    explicitly approved after dependency and CI review.
+-   Python baseline: **3.11 minimum** (ADR-009). The 3.10 compatibility
+    requirement is explicitly waived after review: Python 3.10 reached
+    end-of-life on 2026-10-01 and no longer receives security fixes, which
+    is unacceptable for a product that stores CVs and OAuth tokens. CI runs
+    3.11 and 3.12; moving to 3.13/3.14 is allowed once the dependency set
+    and CI matrix are reviewed.
 -   Email provider for initial release: **Gmail API only**. Support
     personal and supported institutional Google Workspace Gmail accounts
     through official OAuth. Outlook/Microsoft Graph are deferred.
@@ -384,7 +388,9 @@ if hosted deployment requires it.
 -   FastAPI may be introduced for APIs if justified by audit.
 -   Keep authentication, matching, CV versioning, approval, scheduling,
     daily caps, sending and audit policies in backend services.
--   Preserve Python 3.10.x compatibility unless explicitly approved.
+-   Python 3.11 minimum is the approved baseline (§2, ADR-009). Do not add
+    3.10-only compatibility shims or reintroduce `datetime.utcnow`-style
+    deprecated APIs.
 
 ### Data and background services
 
@@ -464,6 +470,17 @@ Use stable IDs, ownership, timestamps, source URLs, verification
 timestamps, explicit statuses, uniqueness and idempotency constraints.
 Enforce concurrency-safe university counters.
 
+Also add the cache entities from §13: `institutions`, `departments`,
+`research_cache_entries`, `research_query_index`;
+and the deliverability entities from §14: `suppression_list`. The
+per-account ceiling and warm-up state live on
+`connected_email_accounts` (columns, not a new entity).
+
+Naming note: `confirmed_profile_facts` is implemented as the confirmed
+subset of `profile_facts` (`status = 'confirmed'`). Phase 3 adds a
+read-only `confirmed_profile_facts` view over it, so the name used here is
+backed by a real database object without a data migration.
+
 ## 8. Security, Privacy and Responsible Use
 
 -   Treat websites, papers, uploaded documents and email replies as
@@ -499,20 +516,31 @@ Complete small, testable increments with independent QA.
 3.  **Documents and CV facts:** upload, parsing, OCR fallback, fact
     confirmation and version tracking.
 4.  **Research/program discovery:** official sources, provenance,
-    verification and opportunity records.
+    verification and opportunity records. Persist every fetched record in
+    the shared research cache (§13) with canonical keys, TTL,
+    `last_checked` and provenance, so a repeat query is served from the
+    database instead of the network.
 5.  **Professor/publication discovery:** verified faculty list, emails,
-    papers, filters and source links.
+    papers, filters and source links. Populate and read the faculty cache;
+    implement the university → department → faculty browse hierarchy
+    (§13.2), including offline behaviour.
 6.  **Matching and shortlist:** explainable scoring, eligibility gates
-    and multi-select.
+    and multi-select. Reuse cached public research data across students
+    (§13.4) while keeping profiles, documents, drafts and outreach
+    strictly per-user.
 7.  **CV optimization:** professor-specific suggestions, highlighted
     diffs, student refinement and approved versions.
 8.  **Email studio:** personalized per-professor drafts, evidence,
-    attachment selection, versioning and consolidated review.
+    attachment selection, versioning and consolidated review. Add the
+    deterministic deliverability lint (§14.2) and block approval when a
+    draft fails it.
 9.  **Gmail OAuth, MCP and approval:** Gmail-only integration, account
     selection, batch approval with per-draft records and mocked tests.
 10. **Scheduling and sending:** persistent workers, recipient timezone,
     blackouts, five-email university cap, actual Gmail send and
-    idempotency.
+    idempotency. Add account reputation guardrails (§14.3): per-account
+    daily ceiling, minimum spacing with jitter, warm-up ramp and the
+    suppression list.
 11. **Reply classification and follow-ups:** positive reply workflow,
     meeting/document requests, three-working-day follow-up drafts and
     approval.
@@ -560,7 +588,22 @@ attempts. 25. Secrets, file privacy, audit events and authorization. 26.
 Hosted frontend/backend/API/DB/worker integration and public URL access
 without cloning. 27. Deployment automation from configured branch. 28.
 Docker Compose and documented self-host setup. 29. Synthetic end-to-end
-workflow with mocked Gmail/research providers.
+workflow with mocked Gmail/research providers. 30. Cache hit: an identical
+program/faculty query performs zero outbound calls (§13.1). 31. Cache TTL:
+an expired entry is refreshed, and a failed refresh keeps the old record
+but marks it stale without fabricating data (§13.3). 32. University →
+department → faculty browsing works with the network adapter disabled
+(§13.2). 33. Cross-user reuse: a second synthetic profile gets the cached
+result set with no new outbound call, no access to the first profile's
+documents or drafts, and an audit event (§13.4). 34. Deliverability lint
+blocks tracking pixels, URL shorteners, spammy subjects, oversized or
+unapproved attachments and identical bodies across recipients (§14.2). 35.
+Deliverability lint passes a normal evidence-backed draft (negative test,
+no false blocks). 36. Per-account ceiling, minimum spacing with jitter and
+warm-up ramp are enforced deterministically under a frozen clock,
+including concurrent workers (§14.3). 37. Suppression: bounce, complaint,
+stop request and manual opt-out permanently block the address and survive
+restart (§14.3).
 
 Preserve existing CI checks and verify actual workflow matrix/check
 names. Keep CI offline and deterministic. Run actual project checks,
@@ -587,8 +630,13 @@ output/evidence.
 -   Preserve protected `main`, current GitHub Actions, migrations and
     working modules.
 -   Inspect `git status`, branches, diffs and CI before changes.
--   Never force-push, reset user data, delete existing work or replace
-    working infrastructure without explicit approval.
+-   Never force-push or rewrite history on `main`, `dev` or any shared
+    branch.
+-   On your own short-lived feature branch, `--force-with-lease` after a
+    rebase is allowed; report it in the PR comment so the diff a reviewer
+    reads is the diff that was pushed.
+-   Never reset user data, delete existing work or replace working
+    infrastructure without explicit approval.
 -   Report exact files changed, commands, actual outputs, failures,
     blockers and remaining risks.
 
@@ -616,7 +664,157 @@ output/evidence.
 17. Independent QA report with evidence, known limitations and
     production risks.
 
-## 13. Non-Negotiable Rules
+## 13. Shared Research Cache and Cross-User Reuse
+
+Repeating an identical university/department/faculty search on every
+request wastes provider quota, gets the product rate-limited and makes
+discovery slow. Discovery therefore caches what it already fetched and
+reuses cached public research data across students.
+
+### 13.1 What is cached
+
+Minimum entities (extending §7): `institutions`, `departments`,
+`faculty_members`, `publications`, `publication_authors`, `programs`,
+plus:
+
+-   `research_cache_entries` — canonical key, source URL, `fetched_at`,
+    `verified_at`, `ttl_seconds`, `content_hash`, HTTP status, adapter
+    name, parser version, raw-payload pointer (stored outside Git and
+    git-ignored).
+-   `research_query_index` — normalized query fingerprint (research area,
+    country, department, degree level) → ids of cached records, so an
+    identical query is resolved from the database.
+
+Every cached row keeps a stable id, canonical key, source URL(s),
+`verified_at` and `confidence`. No field is invented to fill a gap.
+
+### 13.2 University → department → faculty browsing
+
+1.  Students can browse cached `university → department → faculty`
+    without typing a free-text query.
+2.  Each level is served from the database first; the network is used only
+    on a cache miss or an expired entry.
+3.  The UI shows `last_checked`, the source link and whether the record is
+    stale.
+4.  A stale record may still be shown as **stale** for orientation, but it
+    must not be treated as verified for outreach or deadline decisions.
+5.  Browsing must work with the network adapter disabled (offline mode),
+    showing cache contents with an explicit "not verified / last checked"
+    label.
+
+### 13.3 TTL and refresh rules
+
+| Data | Default TTL | Notes |
+| --- | --- | --- |
+| Institution / department page | 90 days | structure changes rarely |
+| Faculty profile / contact | 30 days | email and affiliation change |
+| Publication metadata | 30 days | append-only in practice |
+| Program page, outside an application window | 14 days | |
+| Program page, inside an application window | 3 days | deadlines matter |
+| Open/closed status near a deadline | 1 day | never serve stale status as open |
+
+-   Refresh is on-demand (when a student opens a stale record) or by a
+    scheduled job; provider APIs are never polled aggressively.
+-   A failed refresh keeps the previous record, marks it stale and records
+    the failure; it never deletes verified data and never replaces it with
+    guessed data.
+-   Provider terms, rate limits and robots rules (§8) apply to every
+    refresh.
+
+### 13.4 Cross-user reuse rules
+
+1.  **Shared:** programs, faculty, publications, source URLs and cache
+    status — all public research data.
+2.  **Per-user, never shared:** profile, uploaded documents, confirmed
+    facts, drafts, approval records, outreach history, connected email
+    accounts and OAuth credentials. Every private row carries an owner id
+    and every read is authorized against the caller.
+3.  A second student with an overlapping interest profile may reuse the
+    *cached result set* for their query. They must never see the first
+    student's profile, documents, drafts, scores or outreach, not even in
+    aggregate.
+4.  Similarity for reuse is computed on derived, non-identifying features
+    (research-area taxonomy, degree level, target country). A result set is
+    only reused when at least three distinct profiles fall in the same
+    bucket; otherwise it is computed normally.
+5.  Reuse is recorded in `audit_events` (query fingerprint, reused ids,
+    profile bucket id, no personal content).
+6.  Student documents are stored per-user, encrypted at rest, git-ignored
+    and deleted on request; they are never used to answer another
+    student's request.
+
+---
+
+## 14. Email Deliverability
+
+Sending happens through the student's own Gmail account, so sender
+reputation belongs to that account, not to a shared server. The product
+must avoid every avoidable spam signal and must state honestly that
+placement cannot be guaranteed.
+
+### 14.1 What the product controls and what it does not
+
+-   **Not controllable:** Google's SPF/DKIM/DMARC configuration for the
+    student's domain, the recipient's filters, institutional greylisting,
+    the student's existing sender reputation.
+-   **Controllable:** content quality, personalization, volume, spacing,
+    recipient-list quality, bounce/opt-out handling and claim accuracy.
+-   The UI must explain that Gmail authenticated sending, not the product,
+    provides technical authentication, and must never promise "will not
+    land in spam".
+-   If the student's domain appears to lack DKIM/DMARC, show a warning and
+    suggest contacting the institutional IT administrator.
+
+### 14.2 Draft content lint (deterministic, before approval)
+
+-   Plain-text first; HTML, if any, is generated from the same text.
+-   No tracking pixels, no URL shorteners, no redirect links, no hidden
+    text, no image-only bodies.
+-   At most two links (verified paper and/or official profile) and at most
+    one attachment (student-selected, allow-listed type, size-capped).
+-   No spam patterns: excessive capitalization, `!!!`, fake urgency,
+    "limited time", money promises, misleading subject, `RE:`/`FWD:` on a
+    first contact, all-caps subject.
+-   A real display name and reply-to identity; no `no-reply` sender and no
+    BCC mass recipients.
+-   Every draft must be unique per recipient: it references a specific
+    verified paper or research topic plus specific confirmed student
+    evidence. Identical bodies across recipients are blocked.
+-   Subject length is bounded and attachment types are restricted to the
+    approved allow-list.
+
+### 14.3 Sending behaviour (reputation guardrails)
+
+-   Existing rules stay (§3.11): five initial emails per university per
+    local day, weekday 09:00–17:00 recipient-local window, December and
+    configured blackouts, one follow-up by default.
+-   Per-connected-account ceiling: default 20 initial emails per day,
+    configurable, never above a documented hard limit, enforced atomically
+    across workers.
+-   Minimum spacing between sends from one account: default 90 seconds,
+    with randomized jitter and a deterministic seed in tests.
+-   Warm-up: a newly connected account starts at a low daily ceiling
+    (default 5/day) and ramps over the first seven sending days; the
+    current step is visible to the student.
+-   Suppression list: bounce, complaint, rejection, stop request or manual
+    opt-out permanently suppresses that address and blocks re-adding it.
+-   A hard provider failure (auth error, quota, policy block) pauses the
+    account's queue and notifies the student; it never silently retries in
+    a loop.
+-   Never send to an unverified or guessed address (§3.5), never send the
+    same outreach twice, and never resume after a stop request.
+
+### 14.4 Honest reporting
+
+-   Report the provider's actual response (message id, thread id,
+    timestamp) and distinguish `sending`, `sent`, `bounced`, `replied` and
+    `failed`.
+-   If placement is unknown, say unknown. The product must not infer inbox
+    placement from the absence of a bounce.
+
+---
+
+## 15. Non-Negotiable Rules
 
 -   Free student access; no paid tiers or paywalls.
 -   Hosted public website and self-hosted open-source deployment use the
@@ -642,3 +840,11 @@ output/evidence.
 -   No real professor emails in automated tests.
 -   Never claim production readiness without passing tests and
     independent QA evidence.
+-   Public research data (programs, faculty, publications, sources) may be
+    cached and reused across students; profiles, documents, drafts and
+    outreach are per-user and are never reused or exposed to another
+    student (§13).
+-   A cached record is served as current only within its TTL; an unknown or
+    expired status is never presented as open, confirmed or verified.
+-   Deliverability is best-effort: never promise inbox placement, and never
+    trade the student's sender reputation for volume (§14).
