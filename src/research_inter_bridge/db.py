@@ -140,6 +140,49 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=4,
+        name="accounts_sessions_consents",
+        statements=(
+            # Accounts are separate from `users` so anonymous/local rows created by
+            # the Phase 2 CLI keep working; one user may have at most one account.
+            """
+            CREATE TABLE IF NOT EXISTS accounts (
+                user_id INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                failed_attempts INTEGER NOT NULL DEFAULT 0,
+                locked_until TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            # Only a SHA-256 of the session token is stored: a database leak must
+            # not hand out live sessions.
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_hash TEXT NOT NULL UNIQUE,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                revoked_at TEXT
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id, expires_at)",
+            """
+            CREATE TABLE IF NOT EXISTS consents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                granted_at TEXT NOT NULL,
+                UNIQUE (user_id, kind, policy_version)
+            )
+            """,
+        ),
+    ),
 )
 
 

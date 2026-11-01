@@ -28,8 +28,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import db
+from . import consent, db
 from .errors import (
+    ConsentError,
     DocumentError,
     DocumentNotFoundError,
     DocumentTooLargeError,
@@ -307,6 +308,13 @@ def save_document(
 
     if not connection.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
         raise DocumentError(f"user {user_id} does not exist; create the user first.")
+    # Privacy invariant from task.md §3.1: no document is stored or parsed before
+    # the student has accepted document processing for the current policy version.
+    if not consent.has_consent(connection, user_id, "document_processing"):
+        raise ConsentError(
+            "storing or parsing documents requires the 'document_processing' consent; "
+            f"record it for user {user_id} first (task.md §3.1)."
+        )
 
     digest = hashlib.sha256(payload).hexdigest()
     existing = _find_by_hash(connection, user_id, digest)

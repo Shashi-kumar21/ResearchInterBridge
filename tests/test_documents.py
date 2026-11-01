@@ -11,7 +11,7 @@ import pymupdf
 import pytest
 from docx import Document as WordDocument
 
-from research_inter_bridge import db, documents, parsing
+from research_inter_bridge import consent, db, documents, parsing
 from research_inter_bridge.documents import (
     DOCX_MEDIA_TYPE,
     PDF_MEDIA_TYPE,
@@ -19,6 +19,7 @@ from research_inter_bridge.documents import (
     DocumentRecord,
 )
 from research_inter_bridge.errors import (
+    ConsentError,
     DocumentError,
     DocumentNotFoundError,
     DocumentParsingError,
@@ -82,6 +83,8 @@ def _upload(
     name: str = "cv.pdf",
     **kwargs,
 ) -> DocumentRecord:
+    # Storing a document is only allowed after the processing consent (§3.1).
+    consent.record_consent(connection, user_id=user_id, kind="document_processing")
     return documents.save_document(
         connection,
         user_id=user_id,
@@ -209,7 +212,14 @@ def test_upload_for_unknown_user_is_rejected(
     connection: sqlite3.Connection, data_dir: Path
 ) -> None:
     with pytest.raises(DocumentError, match="create the user first"):
-        _upload(connection, data_dir, 42, pdf_bytes("Asha"))
+        documents.save_document(
+            connection,
+            user_id=42,
+            display_name="cv.pdf",
+            payload=pdf_bytes("Asha"),
+            data_directory=data_dir,
+            actor="student:42",
+        )
 
 
 def test_unknown_kind_is_rejected(connection: sqlite3.Connection, data_dir: Path) -> None:
@@ -526,3 +536,22 @@ def test_deleting_a_user_cascades_document_rows(
 
     remaining = connection.execute("SELECT COUNT(*) AS c FROM student_documents").fetchone()["c"]
     assert remaining == 0
+
+
+def test_upload_without_document_consent_is_refused(
+    connection: sqlite3.Connection, data_dir: Path
+) -> None:
+    user_id = create_user(connection)
+
+    with pytest.raises(ConsentError, match="document_processing"):
+        documents.save_document(
+            connection,
+            user_id=user_id,
+            display_name="cv.pdf",
+            payload=pdf_bytes("Asha Verma"),
+            data_directory=data_dir,
+            actor="student:1",
+        )
+
+    assert documents.list_documents(connection, user_id) == ()
+    assert not (data_dir / "documents").exists()

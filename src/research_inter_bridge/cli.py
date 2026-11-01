@@ -8,20 +8,34 @@ Commands:
 * ``document-add``     - validate, store and optionally parse a CV/transcript.
 * ``document-parse``   - parse a stored document and extract candidate facts.
 * ``document-list``    - list a user's documents.
+* ``consent-accept``   - record an explicit consent for a user.
+* ``consent-status``   - show the consent ledger for a user.
+* ``register``         - create an account (password is prompted, never an argument).
+* ``login`` / ``logout`` / ``whoami`` - manage the local session file.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import getpass
 import json
+import os
 import sqlite3
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from . import db, documents, facts, parsing, profiles
+from . import auth, consent, db, documents, facts, parsing, profiles
 from .config import Settings, load_settings
-from .errors import ConfigError, DocumentError, MigrationError, ProfileError
+from .errors import (
+    AuthError,
+    ConfigError,
+    ConsentError,
+    DocumentError,
+    MigrationError,
+    ProfileError,
+)
 from .health import check_health
 from .logging import configure_logging, get_logger
 
@@ -96,6 +110,40 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Replace values the student already typed (default: only fill blanks).",
     )
+
+    accept = subparsers.add_parser("consent-accept", help="Record an explicit consent.")
+    accept.add_argument("--user-id", type=int, required=True)
+    accept.add_argument("--kind", choices=sorted(consent.CONSENT_TEXTS), required=True)
+
+    status = subparsers.add_parser("consent-status", help="Show the consent ledger.")
+    status.add_argument("--user-id", type=int, required=True)
+
+    register = subparsers.add_parser(
+        "register", help="Create an account; requires the personal-data and document consents."
+    )
+    register.add_argument("--email", required=True)
+    register.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="Read the password from stdin instead of prompting (automation only).",
+    )
+    register.add_argument(
+        "--consent",
+        action="append",
+        choices=sorted(consent.CONSENT_TEXTS),
+        default=None,
+        help=(
+            "Repeatable; when omitted the two consents registration requires are "
+            "assumed (personal_data, document_processing)."
+        ),
+    )
+
+    login = subparsers.add_parser("login", help="Sign in and store a local session file.")
+    login.add_argument("--email", required=True)
+    login.add_argument("--password-stdin", action="store_true")
+
+    subparsers.add_parser("logout", help="Revoke the local session and delete the file.")
+    subparsers.add_parser("whoami", help="Show the signed-in user.")
     return parser
 
 
@@ -148,10 +196,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps({"user_id": user_id}, indent=2))
         return 0
 
+    if args.command.startswith("consent-"):
+        try:
+            return _run_consent_command(args, settings)
+        except (AuthError, ConsentError) as exc:
+            print(f"consent error: {exc}", file=sys.stderr)
+            return 1
+        except (OSError, sqlite3.Error) as exc:
+            print(f"consent operation failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command in {"register", "login", "logout", "whoami"}:
+        try:
+            return _run_auth_command(args, settings)
+        except (AuthError, ConsentError) as exc:
+            print(f"auth error: {exc}", file=sys.stderr)
+            return 1
+        except (OSError, sqlite3.Error) as exc:
+            print(f"auth operation failed: {exc}", file=sys.stderr)
+            return 1
+
     if args.command.startswith("document-"):
         try:
             return _run_document_command(args, settings)
-        except DocumentError as exc:
+        except (DocumentError, ConsentError) as exc:
             print(f"document error: {exc}", file=sys.stderr)
             return 1
         except (OSError, sqlite3.Error) as exc:
@@ -306,4 +374,106 @@ def _run_fact_command(args: argparse.Namespace, settings: Settings) -> int:
             connection, user_id=args.user_id, actor=actor, overwrite=args.overwrite
         )
         print(json.dumps({"applied": list(applied)}, indent=2))
+        return 0
+
+
+def _session_file(settings: Settings) -> Path:
+    return Path(settings.data_directory) / "session"
+
+
+def _write_session(settings: Settings, token: str) -> Path:
+    path = _session_file(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token, encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:  # pragma: no cover - Windows without POSIX modes
+        logger.debug("could not restrict session file permissions on this platform")
+    return path
+
+
+def _read_session(settings: Settings) -> str:
+    path = _session_file(settings)
+    if not path.is_file():
+        raise AuthError(
+            "not signed in; run: python -m research_inter_bridge login --email you@example.edu"
+        )
+    token = path.read_text(encoding="utf-8").strip()
+    if not token:
+        raise AuthError("the local session file is empty; sign in again.")
+    return token
+
+
+def _read_password(*, from_stdin: bool, confirm: bool) -> str:
+    """Prompt for a password; never accept it as a command-line argument."""
+
+    if from_stdin:
+        value = sys.stdin.readline().rstrip("\r\n")
+    else:
+        value = getpass.getpass("Password: ")
+        if confirm:
+            repeated = getpass.getpass("Repeat password: ")
+            if value != repeated:
+                raise AuthError("the two passwords do not match.")
+    return value
+
+
+def _run_consent_command(args: argparse.Namespace, settings: Settings) -> int:
+    with db.session(settings.database_path) as connection:
+        db.apply_migrations(connection)
+        if args.command == "consent-status":
+            print(json.dumps(consent.consent_status(connection, args.user_id), indent=2))
+            return 0
+        granted = consent.record_consent(
+            connection, user_id=args.user_id, kind=args.kind, actor=f"user:{args.user_id}"
+        )
+        print(json.dumps({"granted": granted, "kind": args.kind}, indent=2))
+        return 0
+
+
+def _run_auth_command(args: argparse.Namespace, settings: Settings) -> int:
+    with db.session(settings.database_path) as connection:
+        db.apply_migrations(connection)
+
+        if args.command == "register":
+            password = _read_password(from_stdin=args.password_stdin, confirm=True)
+            # Omitted --consent means "the two consents the CLI just explained";
+            # passing --consent explicitly narrows the set so a partial acceptance
+            # is refused by auth.register instead of silently filled in.
+            accepted = (
+                frozenset(args.consent)
+                if args.consent is not None
+                else frozenset(consent.REQUIRED_CONSENTS)
+            )
+            account = auth.register(
+                connection,
+                email=args.email,
+                password=password,
+                consents=accepted,
+            )
+            print(json.dumps({"user_id": account.user_id, "email": account.email}, indent=2))
+            return 0
+
+        if args.command == "login":
+            password = _read_password(from_stdin=args.password_stdin, confirm=False)
+            session = auth.authenticate(connection, email=args.email, password=password)
+            _write_session(settings, session.token or "")
+            print(
+                json.dumps({"user_id": session.user_id, "expires_at": session.expires_at}, indent=2)
+            )
+            return 0
+
+        if args.command == "whoami":
+            session = auth.resolve_session(connection, _read_session(settings))
+            print(
+                json.dumps({"user_id": session.user_id, "expires_at": session.expires_at}, indent=2)
+            )
+            return 0
+
+        token = ""
+        with contextlib.suppress(AuthError):
+            token = _read_session(settings)
+        revoked = auth.revoke_session(connection, token) if token else False
+        _session_file(settings).unlink(missing_ok=True)
+        print(json.dumps({"signed_out": True, "revoked": revoked}, indent=2))
         return 0

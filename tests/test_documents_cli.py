@@ -34,6 +34,10 @@ def test_user_create_then_document_add_parse_and_list(cli, tmp_path: Path) -> No
     code, out = cli.run("user-create")
     assert code == 0
     user_id = json.loads(out)["user_id"]
+    code, _out = cli.run(
+        "consent-accept", "--user-id", str(user_id), "--kind", "document_processing"
+    )
+    assert code == 0
 
     code, out = cli.run(
         "document-add",
@@ -58,10 +62,26 @@ def test_user_create_then_document_add_parse_and_list(cli, tmp_path: Path) -> No
 def test_document_add_reports_rejected_files(cli, tmp_path: Path) -> None:
     _code, out = cli.run("user-create")
     user_id = json.loads(out)["user_id"]
+    cli.run("consent-accept", "--user-id", str(user_id), "--kind", "document_processing")
     bad = tmp_path / "cv.pdf"
     bad.write_bytes(b"MZ\x90\x00 definitely not a pdf")
 
     code, _out = cli.run("document-add", "--user-id", str(user_id), "--file", str(bad))
+
+    assert code == 1
+
+
+def test_document_add_without_consent_fails(cli, tmp_path: Path) -> None:
+    _code, out = cli.run("user-create")
+    user_id = json.loads(out)["user_id"]
+
+    code, _out = cli.run(
+        "document-add",
+        "--user-id",
+        str(user_id),
+        "--file",
+        str(_docx(tmp_path / "cv.docx", "Asha Verma")),
+    )
 
     assert code == 1
 

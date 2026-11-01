@@ -55,3 +55,15 @@ class DocumentNotFoundError(DocumentError):
 
 class DocumentParsingError(DocumentError):
     """Raised when an accepted document cannot be converted to text."""
+
+
+class AuthError(ResearchInterBridgeError):
+    """Raised when credentials, a session or an account operation fail.
+
+    Messages must stay actionable without revealing whether an email is
+    registered, and must never contain a password or session token.
+    """
+
+
+class ConsentError(ResearchInterBridgeError):
+    """Raised when required consent is missing, unknown or out of date."""
