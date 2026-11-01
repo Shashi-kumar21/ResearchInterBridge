@@ -61,17 +61,22 @@ changes the file.
 
 `register` creates an account and records the consents the student accepted
 (`personal_data` and `document_processing` by default; pass `--consent` to narrow
-them and registration refuses rather than assuming). Passwords are prompted with
-`getpass`, never taken as an argument; `--password-stdin` exists for automation
-only. Only a salted `scrypt` hash is stored, and the password policy is length
-based (10–200 characters) plus a short blocklist. Five wrong passwords lock the
-account for 15 minutes.
+them and registration refuses rather than assuming). Before anything is written
+the exact consent text and policy version are printed, so the ledger entry is
+informed rather than implied; stdout stays machine-readable JSON for
+`--password-stdin` automation. Passwords are prompted with `getpass`, never
+taken as an argument; `--password-stdin` exists for automation only. Only a
+salted `scrypt` hash is stored, and the password policy is length based
+(10–200 characters) plus a short blocklist. Five wrong passwords lock the
+account for 15 minutes; once that window elapses the attempt counter starts
+fresh (a successful login or a password change clears it too), so a single typo
+never re-locks an account.
 
-`login` stores a session token in `data/session` (mode `0600` where supported),
-`whoami` validates it and `logout` revokes it and deletes the file. Only a
-SHA-256 of the token is kept in the database, so a database leak cannot be
-replayed as a live session. Sessions expire after 12 hours; changing the password
-revokes every existing session.
+`login` stores a session token in `data/session` (created with mode `0600` where
+supported), `whoami` validates it and `logout` revokes it and deletes the file.
+Only a SHA-256 of the token is kept in the database, so a database leak cannot
+be replayed as a live session. Sessions expire after 12 hours; changing the
+password revokes every existing session.
 
 `consent-accept` records a consent kind (`personal_data`, `document_processing`,
 `gmail_access`) against the current policy version, and `consent-status` prints

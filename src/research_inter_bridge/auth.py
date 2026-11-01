@@ -18,6 +18,7 @@ Design rules encoded here:
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import hmac
 import math
@@ -146,6 +147,17 @@ def hash_password(password: str, *, salt: bytes | None = None) -> str:
     return f"scrypt${SCRYPT_N}${SCRYPT_R}${SCRYPT_P}${salt.hex()}${derived.hex()}"
 
 
+@functools.cache
+def _placeholder_hash() -> str:
+    """A real scrypt hash used to spend the same work for an unknown email.
+
+    Computed once and cached: the goal is *equal* work per attempt, so both the
+    unknown-email and the wrong-password path must run exactly one scrypt call.
+    """
+
+    return hash_password(secrets.token_urlsafe(16))
+
+
 def verify_password(password: str, stored: str) -> bool:
     """Constant-time verification of a stored hash. Never raises on bad input."""
 
@@ -265,18 +277,29 @@ def authenticate(
     ).fetchone()
     if row is None:
         # Spend comparable time so timing does not reveal that the email is unknown.
-        verify_password(password, hash_password("timing-placeholder"))
+        # The placeholder hash is computed once and cached: hashing per request
+        # would make an unknown email measurably *slower* than a wrong password,
+        # which is the oracle this branch exists to close.
+        verify_password(password, _placeholder_hash())
         _audit_login_failure(connection, reason="unknown_email")
         raise AuthError("invalid email or password.")
 
     now = _now()
-    if row["locked_until"] and _parse(row["locked_until"]) > now:
-        remaining = max(1, math.ceil((_parse(row["locked_until"]) - now).total_seconds() / 60))
-        _audit_login_failure(connection, reason="locked")
-        raise AuthError(f"too many failed attempts; try again in {remaining} minute(s).")
+    failures = int(row["failed_attempts"])
+    if row["locked_until"]:
+        locked_until = _parse(row["locked_until"])
+        if locked_until > now:
+            remaining = max(1, math.ceil((locked_until - now).total_seconds() / 60))
+            _audit_login_failure(connection, reason="locked")
+            raise AuthError(f"too many failed attempts; try again in {remaining} minute(s).")
+        # The window elapsed without a successful login, so the old count is
+        # spent: start a fresh budget. Carrying it over would re-lock the account
+        # after a single typo and let one guess per window keep a known address
+        # locked forever.
+        failures = 0
 
     if not verify_password(password, row["password_hash"]):
-        failures = int(row["failed_attempts"]) + 1
+        failures += 1
         lock_until = (now + LOCKOUT).isoformat() if failures >= MAX_FAILED_ATTEMPTS else None
         with db.transaction(connection):
             connection.execute(
@@ -429,7 +452,11 @@ def change_password(
     new_hash = hash_password(new_password)
     with db.transaction(connection):
         connection.execute(
-            "UPDATE accounts SET password_hash = ?, updated_at = ? WHERE user_id = ?",
+            # A password change also clears any lockout: the student just proved
+            # they know the current password, and leaving the counter behind would
+            # keep the account locked after a successful reset.
+            "UPDATE accounts SET password_hash = ?, failed_attempts = 0, "
+            "locked_until = NULL, updated_at = ? WHERE user_id = ?",
             (new_hash, db.utc_now(), user_id),
         )
         db.record_audit_event(

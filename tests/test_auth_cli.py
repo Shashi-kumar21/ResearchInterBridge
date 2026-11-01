@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from research_inter_bridge import auth
+from research_inter_bridge import auth, consent
 
 EMAIL = "asha@example.edu"
 PASSWORD = "correct horse battery"
@@ -159,3 +159,30 @@ def test_session_file_permissions_are_owner_only(cli, stdin) -> None:
 
     mode = (Path(cli.settings.data_directory) / "session").stat().st_mode & 0o777
     assert mode == 0o600
+
+
+def test_register_shows_the_consent_texts_it_records(cli, stdin) -> None:
+    stdin(PASSWORD)
+    code, out = cli.run("register", "--email", EMAIL, "--password-stdin")
+    assert code == 0
+
+    payload = json.loads(out)
+    assert payload["consents"] == ["document_processing", "personal_data"]
+    assert payload["policy_version"] == consent.POLICY_VERSION
+
+    # The student must see what they are granting, not just a flag name.
+    assert f"policy version {consent.POLICY_VERSION}" in cli.last_err
+    assert consent.CONSENT_TEXTS["personal_data"] in cli.last_err
+    assert consent.CONSENT_TEXTS["document_processing"] in cli.last_err
+    assert consent.CONSENT_TEXTS["gmail_access"] not in cli.last_err
+
+
+def test_register_shows_only_the_narrowed_consent(cli, stdin) -> None:
+    stdin(PASSWORD)
+    code, _out = cli.run(
+        "register", "--email", EMAIL, "--password-stdin", "--consent", "personal_data"
+    )
+
+    assert code == 1
+    assert consent.CONSENT_TEXTS["personal_data"] in cli.last_err
+    assert consent.CONSENT_TEXTS["document_processing"] not in cli.last_err

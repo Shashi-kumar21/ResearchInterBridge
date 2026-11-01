@@ -570,3 +570,84 @@ def test_registration_audit_records_consent_version_without_secrets(
     assert metadata["consents"] == sorted(ALL_CONSENTS)
     assert metadata["policy_version"] == consent.POLICY_VERSION
     assert PASSWORD not in row["metadata_json"]
+
+
+def test_lockout_window_resets_the_attempt_budget(
+    connection: sqlite3.Connection, account: Account, clock: SimpleNamespace
+) -> None:
+    """A single typo after the window must not re-lock the account.
+
+    Regression for QA finding 1: carrying ``failed_attempts`` past an elapsed
+    window turned the lockout into a cheap permanent DoS for a known address.
+    """
+
+    for _ in range(MAX_FAILED_ATTEMPTS):
+        with pytest.raises(AuthError):
+            authenticate(connection, email=EMAIL, password="wrong password here")
+
+    clock.advance(minutes=LOCKOUT.seconds // 60 + 1)
+    with pytest.raises(AuthError, match="invalid email or password"):
+        authenticate(connection, email=EMAIL, password="wrong password here")
+
+    state = connection.execute(
+        "SELECT failed_attempts, locked_until FROM accounts WHERE user_id = ?",
+        (account.user_id,),
+    ).fetchone()
+    assert state["failed_attempts"] == 1
+    assert state["locked_until"] is None
+
+    assert authenticate(connection, email=EMAIL, password=PASSWORD).user_id == account.user_id
+
+
+def test_unknown_email_and_wrong_password_do_equal_hashing_work(
+    connection: sqlite3.Connection, account: Account, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both failure paths must run exactly one password hash comparison.
+
+    Regression for QA finding 2: hashing a fresh placeholder per request made an
+    unknown email about twice as slow as a wrong password, inverting the oracle.
+    """
+
+    calls: list[str] = []
+    real_verify = auth.verify_password
+
+    def counting_verify(password: str, stored: str) -> bool:
+        calls.append(stored)
+        return real_verify(password, stored)
+
+    monkeypatch.setattr(auth, "verify_password", counting_verify)
+
+    with pytest.raises(AuthError):
+        authenticate(connection, email="nobody@example.edu", password=PASSWORD)
+    unknown_calls = len(calls)
+
+    calls.clear()
+    with pytest.raises(AuthError):
+        authenticate(connection, email=EMAIL, password="wrong password here")
+
+    assert unknown_calls == 1
+    assert len(calls) == 1
+    # The placeholder hash is cached, so repeated unknown-email probes never
+    # pay for a second scrypt call.
+    monkeypatch.setattr(auth, "hash_password", _explode)
+    with pytest.raises(AuthError, match="invalid email or password"):
+        authenticate(connection, email="nobody@example.edu", password=PASSWORD)
+
+
+def _explode(*_args: object, **_kwargs: object) -> str:
+    raise AssertionError("hash_password must not run per request")
+
+
+def test_change_password_clears_a_lockout(connection: sqlite3.Connection, account: Account) -> None:
+    for _ in range(MAX_FAILED_ATTEMPTS):
+        with pytest.raises(AuthError):
+            authenticate(connection, email=EMAIL, password="wrong password here")
+
+    change_password(
+        connection,
+        user_id=account.user_id,
+        current_password=PASSWORD,
+        new_password=NEW_PASSWORD,
+    )
+
+    assert authenticate(connection, email=EMAIL, password=NEW_PASSWORD).token

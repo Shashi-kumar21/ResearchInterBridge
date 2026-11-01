@@ -382,9 +382,19 @@ def _session_file(settings: Settings) -> Path:
 
 
 def _write_session(settings: Settings, token: str) -> Path:
+    """Write the token with owner-only permissions from the first byte.
+
+    ``Path.write_text`` would create the file with the process umask (often
+    ``0644``) and leave a window where another local user can read the token, so
+    the file is opened with mode ``0600`` at creation time. The ``chmod`` after
+    it only tightens a file that already existed with wider permissions.
+    """
+
     path = _session_file(settings)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token, encoding="utf-8")
+    handle_fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+        handle.write(token)
     try:
         os.chmod(path, 0o600)
     except OSError:  # pragma: no cover - Windows without POSIX modes
@@ -437,21 +447,40 @@ def _run_auth_command(args: argparse.Namespace, settings: Settings) -> int:
 
         if args.command == "register":
             password = _read_password(from_stdin=args.password_stdin, confirm=True)
-            # Omitted --consent means "the two consents the CLI just explained";
-            # passing --consent explicitly narrows the set so a partial acceptance
+            # Omitted --consent means "the two consents registration requires".
+            # Passing --consent explicitly narrows the set so a partial acceptance
             # is refused by auth.register instead of silently filled in.
             accepted = (
                 frozenset(args.consent)
                 if args.consent is not None
                 else frozenset(consent.REQUIRED_CONSENTS)
             )
+            # Consent must be informed, not implied: print the exact text (and its
+            # policy version) the student is granting before anything is recorded.
+            # stderr keeps stdout machine-readable for --password-stdin automation.
+            print(
+                f"Recording consent to policy version {consent.POLICY_VERSION}:",
+                file=sys.stderr,
+            )
+            for kind in sorted(accepted & set(consent.CONSENT_TEXTS)):
+                print(f"[{kind}] {consent.CONSENT_TEXTS[kind]}", file=sys.stderr)
             account = auth.register(
                 connection,
                 email=args.email,
                 password=password,
                 consents=accepted,
             )
-            print(json.dumps({"user_id": account.user_id, "email": account.email}, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "user_id": account.user_id,
+                        "email": account.email,
+                        "consents": sorted(accepted),
+                        "policy_version": consent.POLICY_VERSION,
+                    },
+                    indent=2,
+                )
+            )
             return 0
 
         if args.command == "login":
