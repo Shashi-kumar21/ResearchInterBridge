@@ -21,6 +21,7 @@ def _pdf(path: Path, text: str) -> Path:
 def _seed(cli, tmp_path: Path, *texts: str) -> tuple[int, list[dict[str, object]]]:
     _code, out = cli.run("user-create")
     user_id = json.loads(out)["user_id"]
+    cli.run("consent-accept", "--user-id", str(user_id), "--kind", "document_processing")
     for index, text in enumerate(texts):
         code, _out = cli.run(
             "document-add",

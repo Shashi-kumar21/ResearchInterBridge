@@ -2,13 +2,15 @@
 
 ``cli`` runs the real CLI entry point against a temporary database and data
 directory, so tests exercise the same code path a user runs in PowerShell.
+``cli.last_err`` holds the stderr of the most recent call, which is where
+notices such as the consent texts are printed.
 """
 
 from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -19,12 +21,13 @@ from research_inter_bridge.config import Settings
 _ENV_KEYS = ("RIB_DATABASE_PATH", "RIB_DATA_DIRECTORY")
 
 
-@dataclass(frozen=True)
+@dataclass
 class CliRunner:
-    """Callable wrapper around ``main`` plus the settings it used."""
+    """Callable wrapper around ``main`` plus the settings and last stderr."""
 
     settings: Settings
     run: Callable[..., tuple[int, str]]
+    last_err: str = field(default="")
 
 
 @pytest.fixture
@@ -37,7 +40,9 @@ def cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> CliRunner:
         os.environ["RIB_DATA_DIRECTORY"] = str(settings.data_directory)
         try:
             code = main(["--env-file", str(tmp_path / "missing.env"), *argv])
-            return code, capsys.readouterr().out
+            captured = capsys.readouterr()
+            runner.last_err = captured.err
+            return code, captured.out
         finally:
             for key, value in previous.items():
                 if value is None:
@@ -45,4 +50,5 @@ def cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> CliRunner:
                 else:
                     os.environ[key] = value
 
-    return CliRunner(settings=settings, run=run)
+    runner = CliRunner(settings=settings, run=run)
+    return runner

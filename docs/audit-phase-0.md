@@ -187,3 +187,26 @@ phases) is authoritative; the mapping is: old 3 → new 4, old 4 → new 5, old 
 new 6, old 6 → new 8, old 7 → new 9, old 8 → new 10, old 9 → new 11, old 10 →
 new 12, old 11 → new 13. New phases 3 (documents/CV facts) and 7 (CV
 optimization) have no predecessor.
+
+## 12. Phase 2 delivery log (slices merged into `dev`)
+
+| Slice | Scope | Status |
+| --- | --- | --- |
+| 2a | Student profile model, validation, per-user storage, `user-create` | merged (PR #5) |
+| 2b | Document upload/validation/storage, PDF/DOCX/TXT parsing, candidate facts | merged (PR #7) |
+| 2c-1 | Fact confirmation, conflict flags, corrections, apply-to-profile | merged (PR #8) |
+| 2c-2 | Accounts, scrypt password hashing, lockout, versioned consent, sessions, export/delete | this PR |
+| 2d | Next.js + TypeScript shell: landing, onboarding, upload and fact confirmation | next (ADR-010) |
+
+Phase 2c-2 notes for reviewers:
+
+* Consents are versioned (`consent.POLICY_VERSION`), so changing the policy text
+  re-asks instead of silently reusing an old acceptance.
+* `document_processing` consent is enforced inside `documents.save_document`, not
+  only in the CLI, so no caller can bypass it (§3.1).
+* Only a SHA-256 of each session token is stored; the raw token is returned once
+  and written to `data/session` with mode `0600` where the OS supports it.
+* Failed logins are indistinguishable for unknown email and wrong password, and
+  audit rows never contain the address, the password or the token.
+* Still open: Google OAuth client and Workspace policy for phase 9 (ADR-006),
+  and the polite-pool contact email for OpenAlex/Crossref (phase 4).
