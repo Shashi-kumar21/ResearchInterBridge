@@ -119,3 +119,21 @@ dashboard phase) is therefore retired.
 **Consequences:** phases 2+ ship a screen (or an explicit "backend-only slice"
 note in the PR) instead of deferring all UI; frontend lint/typecheck/build joins
 CI as *additive* jobs so the four required check names stay stable.
+
+## ADR-011 — MIT license
+
+**Status:** accepted 2026-11-02 · **Decided by:** Owner · **Spec:** `task.md` §1
+
+The repository claims to be free and open source but carried no license, which
+means the default "all rights reserved" applied: public visibility is not an open
+source grant. The Owner chose **MIT**.
+
+**Why MIT:** the product must stay easy to self-host by students and small labs,
+and MIT adds no attribution burden beyond keeping the notice. A copyleft license
+(AGPL) was considered because the product is also hosted, but it would raise the
+bar for the self-hosting mode the spec requires.
+
+**Consequences:** `LICENSE` is committed and `README.md` links to it. Third-party
+dependencies keep their own licenses; a dependency whose license is incompatible
+with MIT must be rejected in review. Changing the license later is an Owner
+decision and needs an ADR.

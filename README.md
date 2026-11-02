@@ -11,6 +11,7 @@ Research discovery, OAuth and sending are not implemented yet, and nothing in
 this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
+* License: MIT (see `LICENSE`), decided by the Owner on 2026-11-02.
 * Team workflow: `AGENTS.md`.
 * Decisions (Python floor, backend-first, redaction): `docs/decisions.md`.
 * Current audit and plan: `docs/audit-phase-0.md`.

@@ -236,3 +236,5 @@ Phase 2c-2 notes for reviewers:
   required check names are unchanged, per ADR-010.
 * Deferred deliberately: no registration/login form until the HTTP API exists, so
   nothing on the site can fail silently.
+* QA's licence note is closed by ADR-011: the repository is MIT licensed, so the
+  "free and open source" copy on the page is now true.
