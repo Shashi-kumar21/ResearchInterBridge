@@ -1,0 +1,357 @@
+/* Design tokens. One accent, one paper tone, no external fonts or images so the
+   page works offline and inside the smallest hosting tier. */
+:root {
+  --paper: #f6f4ee;
+  --ink: #14181b;
+  --muted: #555f5b;
+  --rule: #d8d3c6;
+  --accent: #0d5b49;
+  --accent-ink: #ffffff;
+  --card: #fffdf8;
+  --ok: #0d5b49;
+  --ok-soft: #e2efe9;
+  --progress: #7a4b00;
+  --progress-soft: #f6e9d3;
+  --planned: #4a5258;
+  --planned-soft: #e8e6df;
+  --focus: #0b63c5;
+  --shadow: 0 1px 2px rgb(20 24 27 / 6%), 0 8px 24px rgb(20 24 27 / 4%);
+
+  --step: 1.5rem;
+  --measure: 68rem;
+  --radius: 12px;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
+    "Times New Roman", serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #12161a;
+    --ink: #eef0ed;
+    --muted: #a9b2ad;
+    --rule: #2b3338;
+    --accent: #62c6a6;
+    --accent-ink: #0b1411;
+    --card: #181d22;
+    --ok: #8fd9bd;
+    --ok-soft: #16281f;
+    --progress: #e7b877;
+    --progress-soft: #2a2113;
+    --planned: #b3bcc1;
+    --planned-soft: #1f252a;
+    --focus: #7fb2ff;
+    --shadow: none;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-size: clamp(2rem, 1.2rem + 3.2vw, 3.6rem);
+}
+
+h2 {
+  margin: 0;
+  font-size: clamp(1.5rem, 1.15rem + 1.2vw, 2.1rem);
+}
+
+h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  line-height: 1.35;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 10;
+  padding: 0.75rem 1rem;
+  background: var(--ink);
+  color: var(--paper);
+  border-radius: 0 0 var(--radius) 0;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+.site-header,
+main > section,
+.site-footer {
+  width: min(100% - 2.5rem, var(--measure));
+  margin-inline: auto;
+}
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-block: 1.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.phase {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+}
+
+.hero {
+  padding-block: clamp(2.5rem, 6vw, 5rem);
+  max-width: 46rem;
+}
+
+.eyebrow {
+  margin-bottom: 1rem;
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.lead {
+  max-width: 42rem;
+  font-size: clamp(1.05rem, 1rem + 0.35vw, 1.25rem);
+  color: var(--muted);
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-block: 1.75rem;
+}
+
+.button {
+  display: inline-block;
+  padding: 0.7rem 1.15rem;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.button:hover {
+  filter: brightness(1.08);
+}
+
+.button-quiet {
+  background: transparent;
+  color: var(--accent);
+}
+
+.note {
+  padding: 0.9rem 1.1rem;
+  border-left: 3px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+main > section {
+  padding-block: clamp(2rem, 4vw, 3.25rem);
+  border-top: 1px solid var(--rule);
+}
+
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.counts {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.section-lead {
+  max-width: 44rem;
+  margin-top: 0.75rem;
+  color: var(--muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  gap: 1rem;
+  margin: 1.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.25rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.card p {
+  color: var(--muted);
+  font-size: 0.97rem;
+}
+
+.badge {
+  flex-shrink: 0;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.badge-available {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge-in-progress {
+  background: var(--progress-soft);
+  color: var(--progress);
+}
+
+.badge-planned {
+  background: var(--planned-soft);
+  color: var(--planned);
+}
+
+.surface {
+  font-size: 0.82rem;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 1.25rem;
+  margin: 1.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.steps li {
+  padding-top: 1rem;
+  border-top: 2px solid var(--accent);
+  counter-increment: step;
+}
+
+.steps li::before {
+  content: counter(step, decimal-leading-zero);
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.steps p {
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.site-footer {
+  padding-block: 2.5rem 3.5rem;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.fine-print {
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

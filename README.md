@@ -4,10 +4,11 @@ Local-first assistant that helps students find international research
 internships, identify relevant professors and papers, prepare evidence-backed
 outreach, and send approved email through connected accounts.
 
-Status: **Phase 2 — auth, profile and documents**. Accounts, consent, sessions,
-profiles, document ingestion (PDF/DOCX/TXT) and candidate-fact extraction work;
-research discovery, OAuth and sending are not implemented yet. Nothing in this
-repository can send email.
+Status: **Phase 2 — auth, profile, documents and the web shell**. Accounts,
+consent, sessions, profiles, document ingestion (PDF/DOCX/TXT) and candidate-fact
+extraction work from the CLI; the Next.js landing page is live in `web/`.
+Research discovery, OAuth and sending are not implemented yet, and nothing in
+this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
 * Team workflow: `AGENTS.md`.
@@ -106,15 +107,36 @@ never turned into a date, because that would invent a day and month.
 python -m ruff check .
 python -m ruff format --check .
 py -3.11 -m pytest
+
+cd web
+npm ci
+npm run lint; npm run typecheck; npm test; npm run build
 ```
 
 Logic that must be verifiable offline lives in `src/research_inter_bridge/`;
 tests never call live APIs and never send email.
 
+## Frontend (`web/`)
+
+Next.js + TypeScript (ADR-010), currently one static, accessible landing page.
+
+```powershell
+cd web
+npm ci
+npm run dev      # http://localhost:3000
+```
+
+The page carries no sign-up form yet because there is no HTTP API to submit to.
+Product copy lives in `web/lib/roadmap.ts` and `web/lib/roadmap.test.ts` enforces
+it: a capability cannot be labelled `available` on the `web` surface, email
+sending cannot be `available`, and every entry needs a real detail. There are no
+external fonts, images, analytics or client-side JS, so the build is offline and
+self-hosting stays predictable. `web/README.md` explains the constraints.
+
 ## Layout
 
 ```text
-src/research_inter_bridge/    package
+src/research_inter_bridge/    Python package
   config.py                   environment settings, .env parsing, validation
   logging.py                  mandatory credential redaction (filter + formatter)
   db.py                       SQLite connection, read-only probe, migrations, audit
@@ -127,6 +149,8 @@ src/research_inter_bridge/    package
   facts.py                    fact extraction + confirm/reject/conflict workflow
   cli.py / __main__.py        migrate, health, auth, consent, document and fact commands
 tests/                        pytest suite (offline, synthetic data only)
+web/                          Next.js + TypeScript site (landing page today)
+web/lib/roadmap.ts            capability/limit/workflow data the page renders
 docs/                         audit report, decisions, architecture notes
 ```
 

@@ -196,7 +196,9 @@ optimization) have no predecessor.
 | 2b | Document upload/validation/storage, PDF/DOCX/TXT parsing, candidate facts | merged (PR #7) |
 | 2c-1 | Fact confirmation, conflict flags, corrections, apply-to-profile | merged (PR #8) |
 | 2c-2 | Accounts, scrypt password hashing, lockout, versioned consent, sessions, export/delete | this PR |
-| 2d | Next.js + TypeScript shell: landing, onboarding, upload and fact confirmation | next (ADR-010) |
+| 2d-1 | Next.js + TypeScript shell: landing page, honest capability model, frontend CI job | this PR (ADR-010) |
+| 2d-2 | FastAPI auth/consent endpoints + register/login screens | next |
+| 2d-3 | Onboarding, profile and document upload screens | planned |
 
 Phase 2c-2 notes for reviewers:
 
@@ -210,3 +212,20 @@ Phase 2c-2 notes for reviewers:
   audit rows never contain the address, the password or the token.
 * Still open: Google OAuth client and Workspace policy for phase 9 (ADR-006),
   and the polite-pool contact email for OpenAlex/Crossref (phase 4).
+
+## 13. Phase 2d-1 notes (frontend shell)
+
+* `web/` is a Next.js 16 + React 19 + TypeScript 5.9 app with no UI framework:
+  plain CSS tokens, no external fonts, images, analytics or client-side JS for
+  static copy, so `npm run build` works offline.
+* Product copy that could over-claim is typed data in `web/lib/roadmap.ts`.
+  `web/lib/roadmap.test.ts` fails if email sending becomes `available`, if an
+  `available` capability claims the `web` surface (canary until a real web
+  feature lands), or if any entry loses its detail.
+* Security headers (`nosniff`, `X-Frame-Options: DENY`, referrer policy,
+  permissions policy) are set in `next.config.ts`, and `react/no-danger` is an
+  ESLint error for when scraped professor/paper text arrives.
+* CI gets an additive `frontend` job (lint → typecheck → test → build); the four
+  required check names are unchanged, per ADR-010.
+* Deferred deliberately: no registration/login form until the HTTP API exists, so
+  nothing on the site can fail silently.

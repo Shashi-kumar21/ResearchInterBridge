@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.py[cod]
 .venv/
@@ -18,3 +19,13 @@ data/
 *.db-shm
 *.sqlite
 *.sqlite3
+
+# Next.js frontend (web/)
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+npm-debug.log*
+.vercel/
+coverage/
