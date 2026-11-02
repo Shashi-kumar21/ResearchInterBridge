@@ -196,7 +196,9 @@ optimization) have no predecessor.
 | 2b | Document upload/validation/storage, PDF/DOCX/TXT parsing, candidate facts | merged (PR #7) |
 | 2c-1 | Fact confirmation, conflict flags, corrections, apply-to-profile | merged (PR #8) |
 | 2c-2 | Accounts, scrypt password hashing, lockout, versioned consent, sessions, export/delete | this PR |
-| 2d | Next.js + TypeScript shell: landing, onboarding, upload and fact confirmation | next (ADR-010) |
+| 2d-1 | Next.js + TypeScript shell: landing page, honest capability model, frontend CI job | this PR (ADR-010) |
+| 2d-2 | FastAPI auth/consent endpoints + register/login screens | next |
+| 2d-3 | Onboarding, profile and document upload screens | planned |
 
 Phase 2c-2 notes for reviewers:
 
@@ -210,3 +212,29 @@ Phase 2c-2 notes for reviewers:
   audit rows never contain the address, the password or the token.
 * Still open: Google OAuth client and Workspace policy for phase 9 (ADR-006),
   and the polite-pool contact email for OpenAlex/Crossref (phase 4).
+
+## 13. Phase 2d-1 notes (frontend shell)
+
+* `web/` is a Next.js 16 + React 19 + TypeScript 5.9 app with no UI framework:
+  plain CSS tokens and server components only. No client components, no
+  hand-written browser JS, no external fonts, images or analytics, so the build
+  works offline. Next still ships its framework runtime (~171 KB gzipped here),
+  which the README states rather than claiming zero JavaScript.
+* Product copy that could over-claim is typed data in `web/lib/roadmap.ts`.
+  `web/lib/roadmap.test.ts` fails if email sending becomes `available`, if an
+  `available` capability claims the `web` surface (canary until a real web
+  feature lands), or if any entry loses its detail.
+* Security headers (`nosniff`, `X-Frame-Options: DENY`, referrer policy,
+  permissions policy, and the nonce-free CSP subset: `base-uri`, `object-src`,
+  `frame-ancestors`, `form-action`) are set in `next.config.ts`.
+  `react/no-danger` is an ESLint error for when scraped professor/paper text
+  arrives; `script-src` waits for a per-request nonce with the dynamic pages.
+* Status and surface copy is data (`roadmap.ts`) with a pure `surfaceLabel()`,
+  so a card cannot say "Planned" and "Available on" at the same time. The tests
+  also cover the positive case of the web-capability canary.
+* CI gets an additive `frontend` job (lint → typecheck → test → build); the four
+  required check names are unchanged, per ADR-010.
+* Deferred deliberately: no registration/login form until the HTTP API exists, so
+  nothing on the site can fail silently.
+* QA's licence note is closed by ADR-011: the repository is MIT licensed, so the
+  "free and open source" copy on the page is now true.

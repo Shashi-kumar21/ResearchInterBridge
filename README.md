@@ -4,12 +4,14 @@ Local-first assistant that helps students find international research
 internships, identify relevant professors and papers, prepare evidence-backed
 outreach, and send approved email through connected accounts.
 
-Status: **Phase 2 — auth, profile and documents**. Accounts, consent, sessions,
-profiles, document ingestion (PDF/DOCX/TXT) and candidate-fact extraction work;
-research discovery, OAuth and sending are not implemented yet. Nothing in this
-repository can send email.
+Status: **Phase 2 — auth, profile, documents and the web shell**. Accounts,
+consent, sessions, profiles, document ingestion (PDF/DOCX/TXT) and candidate-fact
+extraction work from the CLI; the Next.js landing page is live in `web/`.
+Research discovery, OAuth and sending are not implemented yet, and nothing in
+this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
+* License: MIT (see `LICENSE`), decided by the Owner on 2026-11-02.
 * Team workflow: `AGENTS.md`.
 * Decisions (Python floor, backend-first, redaction): `docs/decisions.md`.
 * Current audit and plan: `docs/audit-phase-0.md`.
@@ -106,15 +108,42 @@ never turned into a date, because that would invent a day and month.
 python -m ruff check .
 python -m ruff format --check .
 py -3.11 -m pytest
+
+cd web
+npm ci
+npm run lint; npm run typecheck; npm test; npm run build
 ```
+
+The `frontend` CI job runs the same four steps on Node 24 with the committed
+`web/package-lock.json`.
 
 Logic that must be verifiable offline lives in `src/research_inter_bridge/`;
 tests never call live APIs and never send email.
 
+## Frontend (`web/`)
+
+Next.js + TypeScript (ADR-010), currently one static, accessible landing page.
+
+```powershell
+cd web
+npm ci
+npm run dev      # http://localhost:3000
+```
+
+The page carries no sign-up form yet because there is no HTTP API to submit to.
+Product copy lives in `web/lib/roadmap.ts` and `web/lib/roadmap.test.ts` enforces
+its shape: a capability cannot be labelled `available` on the `web` surface,
+email sending cannot be `available`, every status gets a matching surface label,
+and every entry needs a real detail. There are no client components, no
+hand-written browser JavaScript, no external fonts, images or analytics; Next
+still ships its framework runtime (~171 KB gzipped for this page), and the build
+itself makes no network request. Tested on Node 24 (`web/.nvmrc`).
+`web/README.md` explains the constraints.
+
 ## Layout
 
 ```text
-src/research_inter_bridge/    package
+src/research_inter_bridge/    Python package
   config.py                   environment settings, .env parsing, validation
   logging.py                  mandatory credential redaction (filter + formatter)
   db.py                       SQLite connection, read-only probe, migrations, audit
@@ -127,6 +156,8 @@ src/research_inter_bridge/    package
   facts.py                    fact extraction + confirm/reject/conflict workflow
   cli.py / __main__.py        migrate, health, auth, consent, document and fact commands
 tests/                        pytest suite (offline, synthetic data only)
+web/                          Next.js + TypeScript site (landing page today)
+web/lib/roadmap.ts            capability/limit/workflow data the page renders
 docs/                         audit report, decisions, architecture notes
 ```
 
