@@ -18,6 +18,14 @@ const nextConfig: NextConfig = {
             key: "Permissions-Policy",
             value: "camera=(), microphone=(), geolocation=()",
           },
+          {
+            // Directive subset that needs no nonce. `script-src` is deliberately
+            // absent: Next emits inline bootstrap scripts, so it needs a nonce
+            // minted per request when the dynamic pages land (Phase 2d-2), not a
+            // blanket 'unsafe-inline' pasted here today.
+            key: "Content-Security-Policy",
+            value: "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'",
+          },
         ],
       },
     ];

@@ -1,25 +1,14 @@
 import {
   CAPABILITIES,
   LIMITS,
+  STATUS_LABELS,
   WORKFLOW,
   summaryCounts,
+  surfaceLabel,
   type Capability,
-  type CapabilityStatus,
-  type CapabilitySurface,
 } from "@/lib/roadmap";
 
 const REPOSITORY_URL = "https://github.com/Shashi-kumar21/ResearchInterBridge";
-
-const STATUS_LABELS: Record<CapabilityStatus, string> = {
-  available: "Working today",
-  "in-progress": "In progress",
-  planned: "Planned",
-};
-
-const SURFACE_LABELS: Record<CapabilitySurface, string> = {
-  cli: "Command line",
-  web: "Website",
-};
 
 function CapabilityCard({ capability }: { capability: Capability }) {
   return (
@@ -31,7 +20,7 @@ function CapabilityCard({ capability }: { capability: Capability }) {
         </span>
       </div>
       <p>{capability.detail}</p>
-      <p className="surface">Available on: {SURFACE_LABELS[capability.surface]}</p>
+      <p className="surface">{surfaceLabel(capability)}</p>
     </li>
   );
 }
@@ -83,10 +72,11 @@ export default function HomePage() {
             </p>
           </div>
           <p className="section-lead">
-            Every entry below is checked by the test suite against the code that
-            exists. Nothing is labelled working until it is.
+            Status, surface and description are typed data checked by the test
+            suite, and these counts are computed from the same list. Tests cannot
+            see prose, so the copy lives in that data rather than in this file.
           </p>
-          <ul className="grid">
+          <ul className="grid" role="list">
             {CAPABILITIES.map((capability) => (
               <CapabilityCard key={capability.id} capability={capability} />
             ))}
@@ -95,7 +85,7 @@ export default function HomePage() {
 
         <section aria-labelledby="workflow-title">
           <h2 id="workflow-title">How it will work</h2>
-          <ol className="steps">
+          <ol className="steps" role="list">
             {WORKFLOW.map((step) => (
               <li key={step.id}>
                 <h3>{step.title}</h3>
@@ -107,7 +97,7 @@ export default function HomePage() {
 
         <section aria-labelledby="limits-title">
           <h2 id="limits-title">Privacy, fairness and limits</h2>
-          <ul className="grid">
+          <ul className="grid" role="list">
             {LIMITS.map((limit) => (
               <li className="card" key={limit.id}>
                 <h3>{limit.title}</h3>

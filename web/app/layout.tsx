@@ -22,7 +22,8 @@ export const metadata: Metadata = {
   openGraph: {
     title: "ResearchInterBridge",
     description:
-      "Discovery and approval-gated outreach for international research internships.",
+      "Discovery and approval-gated outreach for international research internships. " +
+      "In active development: no email can be sent yet.",
     type: "website",
   },
   robots: { index: true, follow: true },

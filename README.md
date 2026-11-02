@@ -113,6 +113,9 @@ npm ci
 npm run lint; npm run typecheck; npm test; npm run build
 ```
 
+The `frontend` CI job runs the same four steps on Node 24 with the committed
+`web/package-lock.json`.
+
 Logic that must be verifiable offline lives in `src/research_inter_bridge/`;
 tests never call live APIs and never send email.
 
@@ -128,10 +131,13 @@ npm run dev      # http://localhost:3000
 
 The page carries no sign-up form yet because there is no HTTP API to submit to.
 Product copy lives in `web/lib/roadmap.ts` and `web/lib/roadmap.test.ts` enforces
-it: a capability cannot be labelled `available` on the `web` surface, email
-sending cannot be `available`, and every entry needs a real detail. There are no
-external fonts, images, analytics or client-side JS, so the build is offline and
-self-hosting stays predictable. `web/README.md` explains the constraints.
+its shape: a capability cannot be labelled `available` on the `web` surface,
+email sending cannot be `available`, every status gets a matching surface label,
+and every entry needs a real detail. There are no client components, no
+hand-written browser JavaScript, no external fonts, images or analytics; Next
+still ships its framework runtime (~171 KB gzipped for this page), and the build
+itself makes no network request. Tested on Node 24 (`web/.nvmrc`).
+`web/README.md` explains the constraints.
 
 ## Layout
 

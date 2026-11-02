@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   CAPABILITIES,
   LIMITS,
+  STATUS_LABELS,
   WORKFLOW,
   hasWebCapability,
   summaryCounts,
+  surfaceLabel,
   type Capability,
   type CapabilityStatus,
   type CapabilitySurface,
@@ -47,6 +49,63 @@ describe("capability model", () => {
     // site must not imply that a feature works on this website. Flip this test
     // deliberately with the first real web feature.
     expect(hasWebCapability()).toBe(false);
+  });
+
+  it("detects a web capability that really is available", () => {
+    // The negative case above would stay green if the predicate were dead code.
+    const shipped: Capability = {
+      id: "first-web-feature",
+      title: "First web feature",
+      detail: "A detail long enough to be plausible for a real capability.",
+      status: "available",
+      surface: "web",
+    };
+
+    expect(hasWebCapability([shipped])).toBe(true);
+    expect(hasWebCapability([{ ...shipped, status: "planned" }])).toBe(false);
+  });
+
+  it("ignores CLI capabilities when detecting the web surface", () => {
+    const cliOnly: Capability = {
+      id: "cli-only",
+      title: "CLI only",
+      detail: "A detail long enough to be plausible for a real capability.",
+      status: "available",
+      surface: "cli",
+    };
+
+    expect(hasWebCapability([cliOnly])).toBe(false);
+  });
+
+  it("labels every surface line to agree with its status badge", () => {
+    for (const capability of CAPABILITIES) {
+      const label = surfaceLabel(capability);
+
+      expect(label.startsWith(STATUS_LABELS[capability.status])).toBe(
+        capability.status !== "available",
+      );
+      if (capability.status !== "available") {
+        expect(label).not.toMatch(/^Available on/);
+      }
+    }
+  });
+
+  it("never tells a visitor that a planned feature is available", () => {
+    const planned = CAPABILITIES.filter((capability) => capability.status === "planned");
+
+    expect(planned.length).toBeGreaterThan(0);
+    for (const capability of planned) {
+      expect(surfaceLabel(capability)).toMatch(/^Planned for: /);
+    }
+  });
+
+  it("labels each status and surface with a readable word", () => {
+    for (const status of STATUSES) {
+      expect(STATUS_LABELS[status].length).toBeGreaterThan(2);
+    }
+    for (const capability of CAPABILITIES) {
+      expect(surfaceLabel(capability)).toMatch(/the (command line|website)$/);
+    }
   });
 
   it("keeps every available capability on the CLI surface", () => {

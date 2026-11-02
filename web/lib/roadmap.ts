@@ -20,6 +20,18 @@ export interface Capability {
   readonly surface: CapabilitySurface;
 }
 
+export const STATUS_LABELS: Record<CapabilityStatus, string> = {
+  available: "Working today",
+  "in-progress": "In progress",
+  planned: "Planned",
+};
+
+/** What the badge and the "available on" line call each surface. */
+export const SURFACE_LABELS: Record<CapabilitySurface, string> = {
+  cli: "the command line",
+  web: "the website",
+};
+
 export interface CapabilityCounts {
   readonly available: number;
   readonly inProgress: number;
@@ -33,8 +45,9 @@ export const CAPABILITIES: readonly Capability[] = [
     detail:
       "Registration records versioned consent before anything is stored. " +
       "Passwords are kept as salted scrypt hashes, five wrong attempts lock an " +
-      "account for 15 minutes, sessions expire, and you can export or delete " +
-      "everything you uploaded.",
+      "account for 15 minutes, and sessions expire. The Python service can " +
+      "export or delete everything you uploaded; CLI commands for those two " +
+      "land with the HTTP API.",
     status: "available",
     surface: "cli",
   },
@@ -53,8 +66,10 @@ export const CAPABILITIES: readonly Capability[] = [
     title: "CV and transcript intake",
     detail:
       "PDF, DOCX and TXT are checked by content rather than extension, capped at " +
-      "10 MB, stored under a hash-named file in the student's own directory, and " +
-      "rejected when they are scanned, encrypted or malformed.",
+      "10 MB, and stored under a hash-named file in the student's own directory. " +
+      "Malformed or mismatched files are rejected at upload; a scan or a " +
+      "password-protected PDF is kept but reported as failed with the reason " +
+      "(OCR is not available yet).",
     status: "available",
     surface: "cli",
   },
@@ -121,7 +136,8 @@ export const CAPABILITIES: readonly Capability[] = [
     title: "Approval-gated sending through your Gmail",
     detail:
       "Gmail OAuth with least-privilege scopes only; nothing leaves without your " +
-      "per-draft approval. Fair-use guards are fixed in the spec: 20 emails per " +
+      "per-draft approval. Fair-use guards are fixed in the spec: 20 initial " +
+      "emails per " +
       "account per day, 90 seconds between sends, five per university per day, a " +
       "warm-up ramp and a suppression list that honours any opt-out.",
     status: "planned",
@@ -230,6 +246,22 @@ export function summaryCounts(
   }
 
   return { available, inProgress, planned };
+}
+
+/**
+ * The line under each card. It has to agree with the status badge: a planned
+ * card must never read "Available on: ...".
+ */
+export function surfaceLabel(capability: Capability): string {
+  const target = SURFACE_LABELS[capability.surface];
+  switch (capability.status) {
+    case "available":
+      return `Available on: ${target}`;
+    case "in-progress":
+      return `In progress on: ${target}`;
+    case "planned":
+      return `Planned for: ${target}`;
+  }
 }
 
 /** True when any capability is already usable in a browser. */

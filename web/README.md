@@ -11,7 +11,7 @@ than no form.
 
 ```powershell
 cd web
-npm ci                 # or: npm install, first time
+npm ci                 # or: npm install, first time (Node 24, see .nvmrc)
 npm run dev            # http://localhost:3000
 npm run lint
 npm run typecheck
@@ -36,11 +36,15 @@ All product copy that could over-claim lives in `lib/roadmap.ts` as typed data:
 - status or surface is not a known value;
 - email sending is ever labelled `available`;
 - any `available` capability claims the `web` surface (a canary that must be
-  flipped deliberately with the first real web feature);
+  flipped deliberately with the first real web feature), including the positive
+  case that proves the predicate is not dead code;
+- a card's "available on" line disagrees with its status badge — `surfaceLabel()`
+  is pure and unit-tested, so "Planned · Available on: the website" cannot ship;
 - the counts stop matching the list.
 
-So shipping a screen means changing data, not adding marketing prose that drifts
-from the code.
+What these tests cannot see is prose written directly in `page.tsx`. That is why
+the copy lives in `roadmap.ts`; if you add a sentence to JSX, no test will catch
+an over-claim. Keep claims in the data.
 
 ## Deliberate constraints
 
@@ -48,12 +52,22 @@ from the code.
   build makes no network request, which keeps CI and self-hosting predictable.
 - **No UI framework.** Plain CSS with design tokens in `app/globals.css`; fewer
   dependencies to audit for a product that will hold CVs.
-- **Server components only.** No client JavaScript is shipped for static copy.
+- **Server components only.** No client components and no hand-written browser
+  JavaScript; Next still ships its framework runtime (measured: ~171 KB gzipped,
+  6 script tags for this page). The claim is "no app code in the browser", not
+  "zero JavaScript".
 - **Security headers** (`nosniff`, `DENY` framing, referrer policy, permissions
-  policy) are set in `next.config.ts`. Later phases that render scraped
-  professor/paper text need a CSP as well.
+  policy, and a CSP directive subset — `base-uri`, `object-src`,
+  `frame-ancestors`, `form-action`) are set in `next.config.ts`. `script-src`
+  needs a per-request nonce because Next emits inline bootstrap scripts; that
+  arrives with the dynamic pages, not as a blanket `'unsafe-inline'`.
 - `react/no-danger` is an ESLint error: untrusted third-party text must never be
-  injected as HTML.
+  injected as HTML. It does not cover `href`/`src` pointing at untrusted URLs, so
+  later phases validate links separately.
+- ESLint is pinned to `^9.39` because `eslint-plugin-react` (via
+  `eslint-config-next`) does not declare ESLint 10 support yet; pinning keeps
+  `npm ci` deterministic instead of relying on a peer-resolution warning. Move
+  to 10 when the plugin declares it.
 
 ## Status
 
