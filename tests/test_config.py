@@ -139,3 +139,91 @@ def test_settings_are_immutable_and_overridable() -> None:
 
     with pytest.raises(AttributeError):
         original.log_level = "ERROR"  # type: ignore[misc]
+
+
+def test_cors_origins_are_trimmed_deduplicated_and_trailing_slash_free() -> None:
+    settings = Settings.from_env(
+        {
+            "RIB_CORS_ORIGINS": (
+                " http://localhost:3000 , https://app.example.edu/ , http://localhost:3000 "
+            )
+        }
+    )
+
+    assert settings.cors_origins == ("http://localhost:3000", "https://app.example.edu")
+
+
+def test_cors_origins_default_to_none_trusted() -> None:
+    assert Settings().cors_origins == ()
+    assert Settings.from_env({}).cors_origins == ()
+
+
+@pytest.mark.parametrize("value", ["*", "https://*.example.edu", "http://*:3000"])
+def test_cors_origins_reject_wildcards(value: str) -> None:
+    with pytest.raises(ConfigError, match="wildcards are not allowed"):
+        Settings.from_env({"RIB_CORS_ORIGINS": value})
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "app.example.edu",  # no scheme
+        "https://app.example.edu/api",  # path
+        "https://user:secret@app.example.edu",  # credentials
+        "https://app.example.edu?debug=1",  # query
+        "https://app.example.edu#top",  # fragment
+        "ftp://app.example.edu",  # not a browser origin
+    ],
+)
+def test_cors_origins_require_scheme_host_and_optional_port(value: str) -> None:
+    with pytest.raises(ConfigError, match="RIB_CORS_ORIGINS"):
+        Settings.from_env({"RIB_CORS_ORIGINS": value})
+
+
+def test_settings_validate_cors_origins_on_direct_construction() -> None:
+    with pytest.raises(ConfigError, match="wildcards"):
+        Settings(cors_origins=("*",))
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("1", True),
+        ("true", True),
+        ("TRUE", True),
+        ("yes", True),
+        ("on", True),
+        ("0", False),
+        ("false", False),
+        ("No", False),
+        ("off", False),
+    ],
+)
+def test_cookie_secure_accepts_documented_boolean_spellings(value: str, expected: bool) -> None:
+    assert Settings.from_env({"RIB_COOKIE_SECURE": value}).cookie_secure is expected
+
+
+def test_cookie_secure_defaults_to_false_for_local_http() -> None:
+    assert Settings().cookie_secure is False
+
+
+def test_invalid_cookie_secure_names_the_setting() -> None:
+    with pytest.raises(ConfigError, match="RIB_COOKIE_SECURE"):
+        Settings.from_env({"RIB_COOKIE_SECURE": "sometimes"})
+
+
+def test_session_cookie_name_defaults_to_rib_session() -> None:
+    assert Settings().session_cookie_name == "rib_session"
+
+
+@pytest.mark.parametrize("value", ["rib session", "rib;session", "rib=session", "", "ri\nb"])
+def test_session_cookie_name_must_be_a_cookie_token(value: str) -> None:
+    # An empty value falls back to the default, so it is not an error; the rest
+    # must be refused before Starlette can build a malformed header.
+    if not value.strip():
+        assert Settings.from_env({"RIB_SESSION_COOKIE_NAME": value}).session_cookie_name == (
+            "rib_session"
+        )
+        return
+    with pytest.raises(ConfigError, match="RIB_SESSION_COOKIE_NAME"):
+        Settings.from_env({"RIB_SESSION_COOKIE_NAME": value})

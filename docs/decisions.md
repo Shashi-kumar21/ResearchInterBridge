@@ -137,3 +137,41 @@ bar for the self-hosting mode the spec requires.
 dependencies keep their own licenses; a dependency whose license is incompatible
 with MIT must be rejected in review. Changing the license later is an Owner
 decision and needs an ADR.
+
+## ADR-012 — FastAPI for the JSON API
+
+**Status:** accepted 2026-11-02 · **Decided by:** Dev (within ADR-010) · **Spec:** `task.md` §5, §9
+
+The web frontend needs an HTTP surface, but every rule (password policy, consent
+gate, session lifetime, lockout, deletion) already lives in the service modules.
+The API must not grow a second copy of them.
+
+**Decision:** FastAPI, mounted with a factory (`create_app(settings)`), with
+Pydantic v2 request models and ``httpx``-based tests. Starlette supplies the
+ASGI runtime; uvicorn serves it.
+
+**Why FastAPI:** it is the smallest amount of code that gives request validation,
+response models (so a password hash cannot accidentally be returned in a typed
+route), an OpenAPI schema for the frontend, and typed dependencies for
+"connection per request" and "current session". It is also the stack named in
+`task.md` §5, so no second framework decision is deferred.
+
+**Consequences:**
+
+* `fastapi` and `uvicorn` become runtime dependencies; `httpx` becomes a test
+  dependency (`pip install -e ".[test]"`). CI installs the extra.
+* The API stays a thin layer: routes may only call `auth`, `consent`,
+  `profiles`, `documents` and `health`. A rule added to a route instead of a
+  service is a review rejection.
+* Error codes are part of the contract. `AuthError`/`ConsentError` carry a
+  stable `code`, and `api/routes.py` maps each to one HTTP status; an unmapped
+  code is a 400 by default rather than a leaked 500.
+* The session cookie is `HttpOnly`, `SameSite=Lax` and host-only. `Secure` is
+  configuration because local HTTP development cannot set it. Cross-origin
+  callers must be listed exactly in `RIB_CORS_ORIGINS`; an unsafe method with an
+  unexpected `Origin` is rejected before authentication.
+* Known gap, deliberately deferred: no per-IP throttling of `register`/`login`.
+  Only the per-account lockout exists, so a distributed attempt against many
+  addresses is bounded by scrypt cost, not by a rate limit. This needs a shared
+  store before a public deployment, not an in-process dictionary that breaks
+  with more than one worker.

@@ -195,10 +195,11 @@ optimization) have no predecessor.
 | 2a | Student profile model, validation, per-user storage, `user-create` | merged (PR #5) |
 | 2b | Document upload/validation/storage, PDF/DOCX/TXT parsing, candidate facts | merged (PR #7) |
 | 2c-1 | Fact confirmation, conflict flags, corrections, apply-to-profile | merged (PR #8) |
-| 2c-2 | Accounts, scrypt password hashing, lockout, versioned consent, sessions, export/delete | this PR |
-| 2d-1 | Next.js + TypeScript shell: landing page, honest capability model, frontend CI job | this PR (ADR-010) |
-| 2d-2 | FastAPI auth/consent endpoints + register/login screens | next |
-| 2d-3 | Onboarding, profile and document upload screens | planned |
+| 2c-2 | Accounts, scrypt password hashing, lockout, versioned consent, sessions, export/delete | merged (PR #9) |
+| 2d-1 | Next.js + TypeScript shell: landing page, honest capability model, frontend CI job | merged (PR #10, ADR-010) |
+| 2d-2 | FastAPI auth/consent/account endpoints, cookie sessions, CORS + origin guard, API tests | this PR (ADR-012) |
+| 2d-3 | Register/login/consent screens wired to the API | next |
+| 2d-4 | Onboarding, profile and document upload screens | planned |
 
 Phase 2c-2 notes for reviewers:
 
@@ -238,3 +239,31 @@ Phase 2c-2 notes for reviewers:
   nothing on the site can fail silently.
 * QA's licence note is closed by ADR-011: the repository is MIT licensed, so the
   "free and open source" copy on the page is now true.
+
+## 14. Phase 2d-2 notes (JSON API)
+
+* `api/` is a thin layer: routes call `auth`, `consent` and `health`; no rule is
+  re-implemented. `create_app(settings)` is the only entry point, so tests and
+  `serve` build the same app from the same settings.
+* Sessions use an `HttpOnly`, `SameSite=Lax`, host-only cookie. Only the
+  SHA-256 of the token is stored. `Secure` follows `RIB_COOKIE_SECURE` because
+  local HTTP cannot set it.
+* Two independent cross-site defences: exact-origin CORS (empty by default) and
+  an origin guard that rejects unsafe methods carrying an unexpected `Origin`
+  before authentication runs. A blocked request cannot lock an account.
+* Error bodies are `{"error": {"code", "message"}}`; `AuthError`/`ConsentError`
+  gained a stable `code`, and the route module owns the code → status table.
+  Validation errors keep the field name and reason but never echo the value, so
+  a rejected password is not reflected.
+* Unauthenticated probe `/api/health` reports only `ok`, both schema versions
+  and the check names: no filesystem path, no exception text. Operators get the
+  full report from the CLI `health` command.
+* `GET /api/auth/export` and `DELETE /api/auth/account` expose the existing
+  export/delete behaviours over HTTP. Deletion re-checks the password, removes
+  profile rows, facts, consents, documents (files included) and every session.
+* Known gap, recorded in ADR-012: no per-IP throttling on `register`/`login`
+  yet; the per-account lockout is the only credential-stuffing bound.
+* Frontend screens are deliberately not in this slice (ADR-010 "backend-only
+  slice" note). The landing page copy was corrected in the same PR because it
+  promised "CLI commands for export/delete with the HTTP API"; the endpoints now
+  exist, so the sentence names the API and the planned account screens.

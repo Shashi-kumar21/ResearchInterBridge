@@ -45,9 +45,8 @@ export const CAPABILITIES: readonly Capability[] = [
     detail:
       "Registration records versioned consent before anything is stored. " +
       "Passwords are kept as salted scrypt hashes, five wrong attempts lock an " +
-      "account for 15 minutes, and sessions expire. The Python service can " +
-      "export or delete everything you uploaded; CLI commands for those two " +
-      "land with the HTTP API.",
+      "account for 15 minutes, and sessions expire. Everything you uploaded can " +
+      "be exported or deleted through the API; the account screens are planned.",
     status: "available",
     surface: "cli",
   },

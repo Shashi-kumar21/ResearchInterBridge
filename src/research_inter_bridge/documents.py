@@ -313,7 +313,8 @@ def save_document(
     if not consent.has_consent(connection, user_id, "document_processing"):
         raise ConsentError(
             "storing or parsing documents requires the 'document_processing' consent; "
-            f"record it for user {user_id} first (task.md §3.1)."
+            f"record it for user {user_id} first (task.md §3.1).",
+            code="consent_required",
         )
 
     digest = hashlib.sha256(payload).hexdigest()

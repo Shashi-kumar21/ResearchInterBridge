@@ -12,6 +12,7 @@ Commands:
 * ``consent-status``   - show the consent ledger for a user.
 * ``register``         - create an account (password is prompted, never an argument).
 * ``login`` / ``logout`` / ``whoami`` - manage the local session file.
+* ``serve``            - run the JSON API with uvicorn.
 """
 
 from __future__ import annotations
@@ -144,6 +145,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("logout", help="Revoke the local session and delete the file.")
     subparsers.add_parser("whoami", help="Show the signed-in user.")
+
+    serve = subparsers.add_parser("serve", help="Run the JSON API with uvicorn.")
+    serve.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Interface to bind (default: 127.0.0.1, loopback only).",
+    )
+    serve.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000).")
     return parser
 
 
@@ -176,6 +185,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         print(json.dumps({"schema_version": version}, indent=2))
         return 0
+
+    if args.command == "serve":
+        return _run_serve(args, settings)
 
     if args.command == "user-create":
         try:
@@ -239,6 +251,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     report = check_health(settings)
     print(json.dumps(report.to_dict(), indent=2))
     return 0 if report.ok else 1
+
+
+def _run_serve(args: argparse.Namespace, settings: Settings) -> int:
+    """Run the JSON API in this process.
+
+    The app object is passed straight to uvicorn so the settings already loaded
+    (including ``--env-file``) are the ones the server uses. Reload mode is left
+    to ``uvicorn --factory research_inter_bridge.api:create_app --reload``,
+    which re-reads the environment in its child process.
+    """
+
+    import uvicorn
+
+    from .api import create_app
+
+    logger.info("starting api host=%s port=%s", args.host, args.port)
+    uvicorn.run(
+        create_app(settings),
+        host=args.host,
+        port=args.port,
+        log_level=settings.log_level.lower(),
+    )
+    return 0
 
 
 def _document_payload(record: documents.DocumentRecord) -> dict[str, object]:

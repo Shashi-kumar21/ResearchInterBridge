@@ -4,11 +4,11 @@ Local-first assistant that helps students find international research
 internships, identify relevant professors and papers, prepare evidence-backed
 outreach, and send approved email through connected accounts.
 
-Status: **Phase 2 — auth, profile, documents and the web shell**. Accounts,
-consent, sessions, profiles, document ingestion (PDF/DOCX/TXT) and candidate-fact
-extraction work from the CLI; the Next.js landing page is live in `web/`.
-Research discovery, OAuth and sending are not implemented yet, and nothing in
-this repository can send email.
+Status: **Phase 2 — auth, profile, documents, JSON API and the web shell**.
+Accounts, consent, sessions, profiles, document ingestion (PDF/DOCX/TXT) and
+candidate-fact extraction work from the CLI and over a small HTTP API;
+the Next.js landing page is live in `web/`. Research discovery, OAuth and sending
+are not implemented yet, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
 * License: MIT (see `LICENSE`), decided by the Owner on 2026-11-02.
@@ -20,15 +20,16 @@ this repository can send email.
 
 * **Python 3.11+** (see `docs/decisions.md` ADR-001). On this machine the
   default `python` is 3.10.11, so use `py -3.11` for the suite.
-* Runtime dependencies: `pymupdf` (PDF text) and `python-docx` (DOCX text),
-  installed with `pip install -e .`. Configuration, logging, SQLite access and
-  the health check still use the standard library only.
+* Runtime dependencies: `pymupdf` (PDF text), `python-docx` (DOCX text),
+  `fastapi` and `uvicorn` (JSON API), installed with `pip install -e .`.
+  Configuration, logging, SQLite access and the health check still use the
+  standard library only. `.[test]` adds `pytest` and `httpx` for the API tests.
 
 ## Setup (PowerShell)
 
 ```powershell
 Set-Location "C:\Users\shash\new_project\ResearchInterBridge"
-py -3.11 -m pip install -e . pytest
+py -3.11 -m pip install -e ".[test]"
 python -m pip install ruff        # Ruff is a standalone binary; any Python works
 Copy-Item .env.example .env       # optional; every value has a safe default
 ```
@@ -102,6 +103,55 @@ confirmed facts into the profile: blank fields are filled, values the student
 typed are kept unless `--overwrite` is passed. Graduation **year** facts are
 never turned into a date, because that would invent a day and month.
 
+## HTTP API (`serve`)
+
+```powershell
+py -3.11 -m research_inter_bridge serve          # http://127.0.0.1:8000
+py -3.11 -m research_inter_bridge serve --port 8123
+```
+
+The API is a thin layer over the same services the CLI uses, so no rule is
+implemented twice. It applies pending migrations at startup and refuses to start
+if the database cannot be opened.
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/health` | none | read-only readiness probe; `503` when not migrated |
+| `GET` | `/api/consents/catalogue` | none | consent texts + policy version for the registration screen |
+| `POST` | `/api/auth/register` | none | create an account, record consent, sign in |
+| `POST` | `/api/auth/login` | none | verify credentials, set the session cookie |
+| `POST` | `/api/auth/logout` | cookie | revoke the session, clear the cookie (idempotent) |
+| `GET` | `/api/auth/me` | cookie | account details and consent state |
+| `GET` | `/api/auth/export` | cookie | everything stored for this account (no hashes or tokens) |
+| `DELETE` | `/api/auth/account` | cookie + password | delete the account and all of its data |
+| `GET` | `/api/consents` | cookie | consent state |
+| `POST` | `/api/consents` | cookie | record one consent (idempotent) |
+
+Every failure has the same shape, `{"error": {"code", "message"}}`, with stable
+codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
+(409), `invalid_session` (401), `consent_required` (403) and `invalid_request`
+(422). A rejected request body never echoes its values, so a bad password is not
+reflected back or written to the caller's logs.
+
+Sessions live in an `HttpOnly`, `SameSite=Lax`, host-only cookie
+(`RIB_SESSION_COOKIE_NAME`, default `rib_session`); only a SHA-256 of the token is
+stored server-side. Set `RIB_COOKIE_SECURE=true` when the API is served over
+HTTPS. Cross-origin callers must be listed exactly in `RIB_CORS_ORIGINS` (no
+wildcards); the default trusts none. In addition, an unsafe method that carries
+an `Origin` header is rejected unless that origin is the request's own or an
+allow-listed one, and the check runs before authentication.
+
+For frontend development, run the API and the site on different ports and set
+`RIB_CORS_ORIGINS=http://localhost:3000` (ports do not affect `SameSite`, so the
+cookie is still sent). For automatic reload during development:
+
+```powershell
+uvicorn research_inter_bridge.api:create_app --factory --reload --port 8000
+```
+
+Not implemented yet: per-IP throttling of `register`/`login` (only the per-account
+lockout exists), OAuth and email sending.
+
 ## Checks
 
 ```powershell
@@ -130,8 +180,9 @@ npm ci
 npm run dev      # http://localhost:3000
 ```
 
-The page carries no sign-up form yet because there is no HTTP API to submit to.
-Product copy lives in `web/lib/roadmap.ts` and `web/lib/roadmap.test.ts` enforces
+The page still carries no sign-up form: the API exists, but the register and
+login screens land in the next slice, and a form that cannot submit is worse than
+no form. Product copy lives in `web/lib/roadmap.ts` and `web/lib/roadmap.test.ts` enforces
 its shape: a capability cannot be labelled `available` on the `web` surface,
 email sending cannot be `available`, every status gets a matching surface label,
 and every entry needs a real detail. There are no client components, no
@@ -154,7 +205,8 @@ src/research_inter_bridge/    Python package
   documents.py                upload validation, hash-named storage, per-user isolation
   parsing.py                  PDF/DOCX/TXT text extraction with bounded limits
   facts.py                    fact extraction + confirm/reject/conflict workflow
-  cli.py / __main__.py        migrate, health, auth, consent, document and fact commands
+  api/                        FastAPI app: sessions, CORS, consent and account routes
+  cli.py / __main__.py        migrate, health, serve, auth, consent, document and fact commands
 tests/                        pytest suite (offline, synthetic data only)
 web/                          Next.js + TypeScript site (landing page today)
 web/lib/roadmap.ts            capability/limit/workflow data the page renders
@@ -172,6 +224,8 @@ docs/                         audit report, decisions, architecture notes
 | `health` exits `1` with `database_error: ... does not exist` | database not created yet | run `migrate` first; the probe never creates it |
 | `document-add` fails with "requires the 'document_processing' consent" | consent not recorded for that user | run `consent-accept --user-id <id> --kind document_processing` |
 | `whoami` fails with "not signed in" | no `data/session` file | run `login --email ...` |
-| `login` fails with "too many failed attempts" | five wrong passwords within 15 minutes | wait for the lockout window or use the account owner's reset flow |
+| `login` fails with "too many failed attempts" | five wrong passwords within 15 minutes | wait for the lockout window |
+| API browser call fails with a CORS error | origin not listed | add the exact origin (e.g. `http://localhost:3000`) to `RIB_CORS_ORIGINS` and restart |
+| API call returns `403 origin_not_allowed` | cross-origin `POST` from an origin that is not allow-listed | fix `RIB_CORS_ORIGINS`; same-site requests through one origin need no entry |
 
 Local runtime data (`data/`, `*.db`, `.env`) is git-ignored; keep it that way.
