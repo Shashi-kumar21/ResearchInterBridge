@@ -39,7 +39,8 @@ REQUIRED_CONSENTS: frozenset[str] = frozenset({"personal_data", "document_proces
 def _validate_kind(kind: str) -> str:
     if kind not in CONSENT_TEXTS:
         raise ConsentError(
-            f"unknown consent kind {kind!r}; known: {', '.join(sorted(CONSENT_TEXTS))}."
+            f"unknown consent kind {kind!r}; known: {', '.join(sorted(CONSENT_TEXTS))}.",
+            code="unknown_consent",
         )
     return kind
 
@@ -79,7 +80,7 @@ def record_consent(
 
     _validate_kind(kind)
     if not connection.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
-        raise AuthError(f"user {user_id} does not exist.")
+        raise AuthError(f"user {user_id} does not exist.", code="account_missing")
     if has_consent(connection, user_id, kind):
         return False
 

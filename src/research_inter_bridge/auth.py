@@ -102,7 +102,7 @@ def normalise_email(value: str) -> str:
 
     email = " ".join(str(value).split()).lower()
     if not _EMAIL_RE.match(email):
-        raise AuthError(f"email is not a valid address: {value!r}.")
+        raise AuthError(f"email is not a valid address: {value!r}.", code="invalid_input")
     return email
 
 
@@ -114,19 +114,25 @@ def validate_password(password: str, *, email: str | None = None) -> str:
     """
 
     if not isinstance(password, str) or not password:
-        raise AuthError("password is required.")
+        raise AuthError("password is required.", code="invalid_input")
     if len(password) < MIN_PASSWORD_LENGTH:
         raise AuthError(
-            f"password must be at least {MIN_PASSWORD_LENGTH} characters; got {len(password)}."
+            f"password must be at least {MIN_PASSWORD_LENGTH} characters; got {len(password)}.",
+            code="invalid_input",
         )
     if len(password) > MAX_PASSWORD_LENGTH:
-        raise AuthError(f"password must be at most {MAX_PASSWORD_LENGTH} characters.")
+        raise AuthError(
+            f"password must be at most {MAX_PASSWORD_LENGTH} characters.", code="invalid_input"
+        )
     if password.casefold() in _COMMON_PASSWORDS:
-        raise AuthError("password is one of the most common passwords; choose another one.")
+        raise AuthError(
+            "password is one of the most common passwords; choose another one.",
+            code="invalid_input",
+        )
     if email and password.casefold() == normalise_email(email).split("@")[0]:
-        raise AuthError("password must not be the same as the email address.")
+        raise AuthError("password must not be the same as the email address.", code="invalid_input")
     if password.strip() != password:
-        raise AuthError("password must not start or end with whitespace.")
+        raise AuthError("password must not start or end with whitespace.", code="invalid_input")
     return password
 
 
@@ -134,7 +140,9 @@ def hash_password(password: str, *, salt: bytes | None = None) -> str:
     """Return ``scrypt$n$r$p$salt$hash`` for a password."""
 
     if len(password) > MAX_PASSWORD_LENGTH:
-        raise AuthError(f"password must be at most {MAX_PASSWORD_LENGTH} characters.")
+        raise AuthError(
+            f"password must be at most {MAX_PASSWORD_LENGTH} characters.", code="invalid_input"
+        )
     salt = secrets.token_bytes(16) if salt is None else salt
     derived = hashlib.scrypt(
         password.encode("utf-8"),
@@ -189,8 +197,28 @@ def _account_row(connection: sqlite3.Connection, user_id: int) -> sqlite3.Row:
         (user_id,),
     ).fetchone()
     if row is None:  # pragma: no cover - only reachable through a torn write
-        raise AuthError(f"account {user_id} does not exist.")
+        raise AuthError(f"account {user_id} does not exist.", code="account_missing")
     return row
+
+
+def get_account(connection: sqlite3.Connection, user_id: int) -> Account:
+    """Return the public account record for ``user_id``.
+
+    Used by the HTTP layer so a response can name the signed-in account without
+    selecting the password hash.
+    """
+
+    row = connection.execute(
+        "SELECT user_id, email, created_at FROM accounts WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        raise AuthError(f"account {user_id} does not exist.", code="account_missing")
+    return Account(
+        user_id=int(row["user_id"]),
+        email=row["email"],
+        created_at=row["created_at"],
+    )
 
 
 def register(
@@ -213,13 +241,15 @@ def register(
     if unknown:
         raise ConsentError(
             f"unknown consent kind(s): {', '.join(sorted(unknown))}; "
-            f"known: {', '.join(sorted(consent.CONSENT_TEXTS))}."
+            f"known: {', '.join(sorted(consent.CONSENT_TEXTS))}.",
+            code="unknown_consent",
         )
     missing = consent.REQUIRED_CONSENTS - accepted
     if missing:
         raise ConsentError(
             "registration requires explicit consent to: "
-            f"{', '.join(sorted(missing))} (see CONSENT_TEXTS)."
+            f"{', '.join(sorted(missing))} (see CONSENT_TEXTS).",
+            code="consent_required",
         )
 
     password_hash = hash_password(password)
@@ -245,7 +275,9 @@ def register(
                 metadata={"consents": sorted(accepted), "policy_version": consent.POLICY_VERSION},
             )
     except sqlite3.IntegrityError as exc:
-        raise AuthError(f"an account with email {normalised!r} already exists.") from exc
+        raise AuthError(
+            f"an account with email {normalised!r} already exists.", code="email_taken"
+        ) from exc
 
     logger.info("account registered user_id=%s", user_id)
     return Account(user_id=user_id, email=normalised, created_at=now)
@@ -268,7 +300,7 @@ def authenticate(
     try:
         normalised = normalise_email(email)
     except AuthError as exc:
-        raise AuthError("invalid email or password.") from exc
+        raise AuthError("invalid email or password.", code="invalid_credentials") from exc
 
     row = connection.execute(
         "SELECT user_id, password_hash, failed_attempts, locked_until "
@@ -282,7 +314,7 @@ def authenticate(
         # which is the oracle this branch exists to close.
         verify_password(password, _placeholder_hash())
         _audit_login_failure(connection, reason="unknown_email")
-        raise AuthError("invalid email or password.")
+        raise AuthError("invalid email or password.", code="invalid_credentials")
 
     now = _now()
     failures = int(row["failed_attempts"])
@@ -291,7 +323,10 @@ def authenticate(
         if locked_until > now:
             remaining = max(1, math.ceil((locked_until - now).total_seconds() / 60))
             _audit_login_failure(connection, reason="locked")
-            raise AuthError(f"too many failed attempts; try again in {remaining} minute(s).")
+            raise AuthError(
+                f"too many failed attempts; try again in {remaining} minute(s).",
+                code="account_locked",
+            )
         # The window elapsed without a successful login, so the old count is
         # spent: start a fresh budget. Carrying it over would re-lock the account
         # after a single typo and let one guess per window keep a known address
@@ -318,7 +353,7 @@ def authenticate(
             )
         if lock_until:
             logger.warning("account locked after repeated failures user_id=%s", row["user_id"])
-        raise AuthError("invalid email or password.")
+        raise AuthError("invalid email or password.", code="invalid_credentials")
 
     with db.transaction(connection):
         connection.execute(
@@ -369,14 +404,14 @@ def resolve_session(connection: sqlite3.Connection, token: str) -> Session:
     """
 
     if not token or len(token) > 200:
-        raise AuthError("authentication required.")
+        raise AuthError("authentication required.", code="invalid_session")
     row = connection.execute(
         "SELECT user_id, last_seen_at, expires_at, revoked_at FROM sessions WHERE token_hash = ?",
         (hash_token(token),),
     ).fetchone()
     now = _now()
     if row is None or row["revoked_at"] is not None or _parse(row["expires_at"]) <= now:
-        raise AuthError("session is invalid or expired; sign in again.")
+        raise AuthError("session is invalid or expired; sign in again.", code="invalid_session")
 
     if now - _parse(row["last_seen_at"]) > timedelta(minutes=1):
         connection.execute(
@@ -444,10 +479,10 @@ def change_password(
 
     row = _account_row(connection, user_id)
     if not verify_password(current_password, row["password_hash"]):
-        raise AuthError("current password is incorrect.")
+        raise AuthError("current password is incorrect.", code="wrong_password")
     validate_password(new_password, email=row["email"])
     if verify_password(new_password, row["password_hash"]):
-        raise AuthError("the new password must differ from the current one.")
+        raise AuthError("the new password must differ from the current one.", code="invalid_input")
 
     new_hash = hash_password(new_password)
     with db.transaction(connection):
@@ -481,7 +516,7 @@ def delete_account(
 
     row = _account_row(connection, user_id)
     if not verify_password(password, row["password_hash"]):
-        raise AuthError("password is incorrect; account was not deleted.")
+        raise AuthError("password is incorrect; account was not deleted.", code="wrong_password")
 
     documents.purge_user_documents(
         connection, user_id=user_id, data_directory=data_directory, actor=f"user:{user_id}"
@@ -500,7 +535,7 @@ def export_account_data(connection: sqlite3.Connection, user_id: int) -> dict[st
         "SELECT email, created_at FROM accounts WHERE user_id = ?", (user_id,)
     ).fetchone()
     if row is None:
-        raise AuthError(f"account {user_id} does not exist.")
+        raise AuthError(f"account {user_id} does not exist.", code="account_missing")
 
     try:
         profile = profiles.load_profile(connection, user_id)

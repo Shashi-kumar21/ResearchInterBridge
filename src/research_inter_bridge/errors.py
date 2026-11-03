@@ -62,8 +62,26 @@ class AuthError(ResearchInterBridgeError):
 
     Messages must stay actionable without revealing whether an email is
     registered, and must never contain a password or session token.
+
+    ``code`` is a stable, non-secret identifier so an HTTP layer can map the
+    failure to a status code without matching on message text:
+    ``invalid_input``, ``email_taken``, ``invalid_credentials``,
+    ``account_locked``, ``invalid_session``, ``wrong_password`` and
+    ``account_missing``.
     """
+
+    def __init__(self, message: str, *, code: str = "auth_error") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class ConsentError(ResearchInterBridgeError):
-    """Raised when required consent is missing, unknown or out of date."""
+    """Raised when required consent is missing, unknown or out of date.
+
+    ``code`` is ``consent_required`` or ``unknown_consent`` so callers can tell a
+    missing acceptance from a typo in a consent kind.
+    """
+
+    def __init__(self, message: str, *, code: str = "consent_required") -> None:
+        super().__init__(message)
+        self.code = code

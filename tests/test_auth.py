@@ -26,6 +26,7 @@ from research_inter_bridge.auth import (
     change_password,
     delete_account,
     export_account_data,
+    get_account,
     hash_password,
     hash_token,
     register,
@@ -651,3 +652,21 @@ def test_change_password_clears_a_lockout(connection: sqlite3.Connection, accoun
     )
 
     assert authenticate(connection, email=EMAIL, password=NEW_PASSWORD).token
+
+
+def test_get_account_returns_only_public_fields(
+    connection: sqlite3.Connection, account: Account
+) -> None:
+    record = get_account(connection, account.user_id)
+
+    assert record == account
+    assert record.email == EMAIL
+    assert not hasattr(record, "password_hash")
+
+
+def test_get_account_rejects_an_unknown_user(connection: sqlite3.Connection) -> None:
+    with pytest.raises(AuthError) as excinfo:
+        get_account(connection, account_id := 424242)
+
+    assert excinfo.value.code == "account_missing"
+    assert str(account_id) in str(excinfo.value)

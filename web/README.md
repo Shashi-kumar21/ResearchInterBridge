@@ -2,10 +2,11 @@
 
 Next.js + TypeScript shell for the public site (`task.md` §5, ADR-010).
 
-This slice ships one honest landing page. The backend is still CLI-only, so the
-page describes what the repository can actually do and labels the rest as
-planned; it contains no sign-up form, because a form that cannot submit is worse
-than no form.
+This slice ships one honest landing page. The Python backend now exposes a small
+JSON API (`python -m research_inter_bridge serve`), but the page has no sign-up
+form yet: the register and login screens are the next slice, and a form that
+cannot submit is worse than no form. The page describes what the repository can
+actually do and labels the rest as planned.
 
 ## Commands
 
@@ -71,5 +72,6 @@ an over-claim. Keep claims in the data.
 
 ## Status
 
-Landing page only. Registration, login, onboarding, upload and fact confirmation
-arrive with the HTTP API (next slices), then discovery and the email studio.
+Landing page only. The API slice (Phase 2d-2) added the auth, consent and account
+endpoints; the register/login/consent screens (2d-3) and onboarding/upload
+(2d-4) come next, then discovery and the email studio.

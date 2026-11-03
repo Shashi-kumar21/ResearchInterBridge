@@ -12,9 +12,11 @@ Design rules:
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .errors import ConfigError
 
@@ -24,6 +26,10 @@ LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 DEFAULT_DATABASE_PATH = Path("data") / "research_inter_bridge.db"
 DEFAULT_LOG_LEVEL = "INFO"
+DEFAULT_SESSION_COOKIE_NAME = "rib_session"
+
+#: Cookie names are restricted to RFC 6265 token characters.
+_COOKIE_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
 
 def _setting_name(key: str) -> str:
@@ -41,6 +47,12 @@ class Settings:
             option: there is deliberately no environment variable for it.
         request_timeout_seconds: Default timeout for outbound HTTP adapters.
         data_directory: Directory that must stay outside version control.
+        cors_origins: Exact browser origins allowed to call the JSON API. Empty
+            (the default) means no cross-origin caller is trusted, which is the
+            safe state for a self-hosted instance.
+        cookie_secure: Send the session cookie with the ``Secure`` flag. Must be
+            enabled whenever the API is served over HTTPS.
+        session_cookie_name: Name of the HttpOnly session cookie.
     """
 
     database_path: Path = DEFAULT_DATABASE_PATH
@@ -48,6 +60,9 @@ class Settings:
     redact_logs: bool = field(default=True, init=False)
     request_timeout_seconds: float = 15.0
     data_directory: Path = Path("data")
+    cors_origins: tuple[str, ...] = ()
+    cookie_secure: bool = False
+    session_cookie_name: str = DEFAULT_SESSION_COOKIE_NAME
 
     def __post_init__(self) -> None:
         if self.log_level not in LOG_LEVELS:
@@ -59,6 +74,13 @@ class Settings:
             raise ConfigError(
                 f"{_setting_name('request_timeout_seconds')} must be greater than 0; "
                 f"got {self.request_timeout_seconds!r}."
+            )
+        for origin in self.cors_origins:
+            _validate_origin(origin)
+        if not _COOKIE_NAME_RE.match(self.session_cookie_name):
+            raise ConfigError(
+                f"{_setting_name('session_cookie_name')} must be a cookie token "
+                f"(letters, digits and !#$%&'*+-.^_`|~); got {self.session_cookie_name!r}."
             )
 
     @property
@@ -82,6 +104,11 @@ class Settings:
             log_level=_read_text(source, "LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
             request_timeout_seconds=_read_float(source, "REQUEST_TIMEOUT_SECONDS", 15.0),
             data_directory=Path(_read_text(source, "DATA_DIRECTORY", "data")),
+            cors_origins=_read_list(source, "CORS_ORIGINS"),
+            cookie_secure=_read_bool(source, "COOKIE_SECURE", False),
+            session_cookie_name=_read_text(
+                source, "SESSION_COOKIE_NAME", DEFAULT_SESSION_COOKIE_NAME
+            ),
         )
 
 
@@ -106,6 +133,55 @@ def _read_float(env: Mapping[str, str], key: str, default: float) -> float:
         return float(value)
     except ValueError as exc:
         raise ConfigError(f"{_setting_name(key)} must be a number; got {value!r}.") from exc
+
+
+def _read_bool(env: Mapping[str, str], key: str, default: bool) -> bool:
+    value = _read_raw(env, key)
+    if value is None:
+        return default
+    normalised = value.lower()
+    if normalised in {"1", "true", "yes", "on"}:
+        return True
+    if normalised in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(
+        f"{_setting_name(key)} must be one of true/false, 1/0, yes/no, on/off; got {value!r}."
+    )
+
+
+def _read_list(env: Mapping[str, str], key: str) -> tuple[str, ...]:
+    """Read a comma-separated list, dropping blanks and duplicates."""
+
+    value = _read_raw(env, key)
+    if value is None:
+        return ()
+    seen: dict[str, None] = {}
+    for item in value.split(","):
+        stripped = item.strip().rstrip("/")
+        if stripped:
+            seen.setdefault(stripped, None)
+    return tuple(seen)
+
+
+def _validate_origin(origin: str) -> None:
+    """Reject origins a browser would never send and wildcards we never mean."""
+
+    if origin == "*" or "*" in origin:
+        raise ConfigError(
+            f"{_setting_name('cors_origins')} must list exact origins; "
+            f"wildcards are not allowed (got {origin!r})."
+        )
+    parts = urlsplit(origin)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise ConfigError(
+            f"{_setting_name('cors_origins')} entries must look like "
+            f"https://app.example.edu (got {origin!r})."
+        )
+    if parts.path or parts.query or parts.fragment or parts.username or parts.password:
+        raise ConfigError(
+            f"{_setting_name('cors_origins')} entries must be scheme + host + optional "
+            f"port only, with no path, credentials or query (got {origin!r})."
+        )
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
