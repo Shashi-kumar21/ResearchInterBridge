@@ -169,9 +169,26 @@ route), an OpenAPI schema for the frontend, and typed dependencies for
 * The session cookie is `HttpOnly`, `SameSite=Lax` and host-only. `Secure` is
   configuration because local HTTP development cannot set it. Cross-origin
   callers must be listed exactly in `RIB_CORS_ORIGINS`; an unsafe method with an
-  unexpected `Origin` is rejected before authentication.
-* Known gap, deliberately deferred: no per-IP throttling of `register`/`login`.
-  Only the per-account lockout exists, so a distributed attempt against many
-  addresses is bounded by scrypt cost, not by a rate limit. This needs a shared
-  store before a public deployment, not an in-process dictionary that breaks
-  with more than one worker.
+  unexpected `Origin` is rejected before authentication. The guard compares
+  scheme, host and port exactly, so a deployment behind a TLS-terminating proxy
+  must forward the original scheme (`--proxy-headers` with a trusted
+  `--forwarded-allow-ips` for uvicorn) or browser requests will be refused.
+* Unauthenticated `register`/`login` are throttled per transport peer address
+  (`ratelimit.py`): 30 registrations/hour, 120 logins/15 minutes, fixed window,
+  counters in SQLite. The check runs before scrypt, so a flood costs a row
+  update instead of a 16 MiB hash. The subject is a SHA-256 of the address;
+  `X-Forwarded-For` is ignored because it is caller-controlled. This is a
+  single-host bound, not a global one: a botnet with many addresses still gets
+  one budget each, which is why the per-account lockout and the account-level
+  email/consent rules remain. A shared campus NAT also shares one budget, so the
+  two constants in `ratelimit.py` are deployment tuning knobs, not sacred
+  numbers.
+* scrypt calls share a `BoundedSemaphore(4)`: request threads queue instead of
+  each allocating ~16 MiB, so concurrency degrades latency rather than memory.
+  FastAPI runs these synchronous service calls in its worker thread pool, so the
+  wait never blocks the event loop.
+* Rate-limit knowledge that would otherwise leak: a locked account answers
+  `429 account_locked` only after five wrong guesses and only for an address
+  that exists. That residual oracle is accepted (the alternative, locking by
+  address, punishes shared campus NAT); `429 rate_limited` is uniform and is
+  emitted before the account row is read.

@@ -129,17 +129,31 @@ if the database cannot be opened.
 
 Every failure has the same shape, `{"error": {"code", "message"}}`, with stable
 codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
-(409), `invalid_session` (401), `consent_required` (403) and `invalid_request`
-(422). A rejected request body never echoes its values, so a bad password is not
-reflected back or written to the caller's logs.
+(409), `invalid_session` (401), `consent_required` (403), `invalid_request`
+(422), `rate_limited` (429) and `deletion_incomplete` (409). A rejected request
+body never echoes its values, so a bad password is not reflected back or written
+to the caller's logs.
+
+`register` and `login` are rate-limited per transport peer address before any
+password hashing happens: 30 registrations per hour and 120 logins per 15
+minutes. A refused request answers `429` with `rate_limited` and a `Retry-After`
+header (seconds). The account lockout uses the same status and header but the
+`account_locked` code. Counters live in SQLite (`rate_limit_counters`), so a
+restart does not reset them, and the stored subject is a SHA-256 of the address,
+never the address itself. `X-Forwarded-For` is deliberately ignored because a
+client can forge it; when running behind a reverse proxy, throttle there as well
+(or expose the API only to the proxy).
 
 Sessions live in an `HttpOnly`, `SameSite=Lax`, host-only cookie
 (`RIB_SESSION_COOKIE_NAME`, default `rib_session`); only a SHA-256 of the token is
 stored server-side. Set `RIB_COOKIE_SECURE=true` when the API is served over
 HTTPS. Cross-origin callers must be listed exactly in `RIB_CORS_ORIGINS` (no
-wildcards); the default trusts none. In addition, an unsafe method that carries
-an `Origin` header is rejected unless that origin is the request's own or an
-allow-listed one, and the check runs before authentication.
+wildcards; values are stored lowercase); the default trusts none. In addition,
+an unsafe method that carries an `Origin` header is rejected unless that origin
+is exactly the request's own (scheme, host and port) or an allow-listed one, and
+the check runs before authentication. Behind a TLS-terminating proxy the app
+must be told the original scheme (for uvicorn: `--proxy-headers` plus
+`--forwarded-allow-ips`), otherwise `https` browser origins are refused.
 
 For frontend development, run the API and the site on different ports and set
 `RIB_CORS_ORIGINS=http://localhost:3000` (ports do not affect `SameSite`, so the
@@ -149,8 +163,7 @@ cookie is still sent). For automatic reload during development:
 uvicorn research_inter_bridge.api:create_app --factory --reload --port 8000
 ```
 
-Not implemented yet: per-IP throttling of `register`/`login` (only the per-account
-lockout exists), OAuth and email sending.
+Not implemented yet: OAuth and email sending.
 
 ## Checks
 

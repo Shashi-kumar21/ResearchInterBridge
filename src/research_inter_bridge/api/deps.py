@@ -38,6 +38,22 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 Connection = Annotated[sqlite3.Connection, Depends(get_connection)]
 
 
+def client_address(request: Request) -> str:
+    """Return the transport peer address used as the rate-limit subject.
+
+    ``X-Forwarded-For`` is deliberately ignored: the header is caller-controlled,
+    so honouring it would let one client pretend to be many and reset its budget.
+    An operator behind a reverse proxy must rate-limit there as well, or run the
+    API on a private interface only the proxy can reach.
+    """
+
+    peer = request.client
+    return peer.host if peer is not None else "unknown"
+
+
+ClientAddress = Annotated[str, Depends(client_address)]
+
+
 def session_token(request: Request) -> str:
     """Read the session cookie, failing with the same error as an expired one."""
 

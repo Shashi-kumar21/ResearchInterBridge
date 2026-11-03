@@ -33,6 +33,7 @@ from .errors import (
     ConsentError,
     DocumentError,
     DocumentNotFoundError,
+    DocumentPurgeError,
     DocumentTooLargeError,
     UnsupportedDocumentError,
 )
@@ -506,11 +507,16 @@ def mark_parse_failed(
 def purge_user_documents(
     connection: sqlite3.Connection, *, user_id: int, data_directory: Path | str, actor: str
 ) -> int:
-    """Delete every document of one user: rows first, then files.
+    """Delete every document of one user: files first, then rows.
 
     Called by the account-deletion flow before the user row is removed, because
-    SQLite cascades rows but knows nothing about files on disk. Returns the
-    number of documents removed.
+    SQLite cascades rows but knows nothing about files on disk. Files go first:
+    if one is locked, the row that names it still exists, nothing is deleted and
+    the student can retry. Deleting rows first would strand the bytes with no
+    record of their names.
+
+    Returns the number of documents removed and raises
+    :class:`DocumentPurgeError` (naming ids only) when a file cannot be removed.
     """
 
     rows = connection.execute(
@@ -518,6 +524,31 @@ def purge_user_documents(
     ).fetchall()
     if not rows:
         return 0
+
+    failed: list[int] = []
+    for row in rows:
+        try:
+            _resolve(row["storage_path"], data_directory).unlink(missing_ok=True)
+        except (OSError, DocumentError):
+            failed.append(int(row["id"]))
+
+    if failed:
+        logger.warning("could not remove %d stored document file(s)", len(failed))
+        with db.transaction(connection):
+            db.record_audit_event(
+                connection,
+                actor=actor,
+                action="document.purge_failed",
+                outcome="failure",
+                target_type="user",
+                target_id=str(user_id),
+                metadata={"documents": sorted(failed)},
+            )
+        raise DocumentPurgeError(
+            "stored files for document(s) "
+            f"{', '.join(str(document_id) for document_id in sorted(failed))} could not be "
+            "removed; nothing was deleted, so the request can be retried."
+        )
 
     with db.transaction(connection):
         connection.execute("DELETE FROM student_documents WHERE user_id = ?", (user_id,))
@@ -530,12 +561,6 @@ def purge_user_documents(
             target_id=str(user_id),
             metadata={"documents": len(rows)},
         )
-
-    for row in rows:
-        try:
-            _resolve(row["storage_path"], data_directory).unlink(missing_ok=True)
-        except (OSError, DocumentError):  # pragma: no cover - locked/odd filesystem
-            logger.warning("purged document row but file removal failed id=%s", row["id"])
     return len(rows)
 
 

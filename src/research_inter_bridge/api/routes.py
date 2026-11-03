@@ -6,10 +6,11 @@ from typing import Any
 
 from fastapi import APIRouter, Request, Response, status
 
-from .. import auth, consent
+from .. import auth, consent, ratelimit
 from ..errors import AuthError
 from ..health import check_health
 from .deps import (
+    ClientAddress,
     Connection,
     CurrentAccount,
     CurrentSession,
@@ -114,13 +115,17 @@ def register(
     response: Response,
     connection: Connection,
     settings: SettingsDep,
+    client: ClientAddress,
 ) -> SessionOut:
     """Create an account and sign it in.
 
     Consent is required *before* the account exists, so the service refuses an
     incomplete registration rather than creating a half-consented account.
+    The rate check runs first: an automated flood must not cost one scrypt hash
+    per request.
     """
 
+    ratelimit.check(connection, rule=ratelimit.REGISTER_RULE, client=client)
     account = auth.register(
         connection,
         email=payload.email,
@@ -131,6 +136,8 @@ def register(
     if session.token is None:  # pragma: no cover - create_session always returns one
         raise AuthError("session token was not created.", code="internal_error")
     set_session_cookie(response, settings, session.token)
+    # The body carries an account and the response sets a cookie: never cache it.
+    response.headers["Cache-Control"] = "no-store"
     return SessionOut(account=_account_out(account), expires_at=session.expires_at)
 
 
@@ -140,19 +147,31 @@ def login(
     response: Response,
     connection: Connection,
     settings: SettingsDep,
+    client: ClientAddress,
 ) -> SessionOut:
     """Verify credentials and set the session cookie.
 
-    Unknown email, wrong password and a locked account are distinct only in the
-    status code and ``code`` field; the two credential failures share one message
-    so this endpoint cannot be used to enumerate registered addresses.
+    Unknown email and wrong password return one identical body and status, so a
+    probe cannot tell registered addresses from unknown ones. Three residual
+    signals remain on purpose, and are documented rather than hidden:
+
+    * a locked account answers ``429 account_locked``, but only after five wrong
+      guesses and only for an address that exists;
+    * this route's own rate limit answers ``429 rate_limited`` uniformly, before
+      the account is read;
+    * response timing is equalised by hashing a placeholder for unknown emails.
+
+    ``Cache-Control: no-store`` keeps a shared cache from storing a session
+    response.
     """
 
+    ratelimit.check(connection, rule=ratelimit.LOGIN_RULE, client=client)
     session = auth.authenticate(connection, email=payload.email, password=payload.password)
     account = auth.get_account(connection, session.user_id)
     if session.token is None:  # pragma: no cover - authenticate always returns one
         raise AuthError("session token was not created.", code="internal_error")
     set_session_cookie(response, settings, session.token)
+    response.headers["Cache-Control"] = "no-store"
     return SessionOut(account=_account_out(account), expires_at=session.expires_at)
 
 

@@ -41,6 +41,14 @@ class DocumentError(ResearchInterBridgeError):
     """
 
 
+class DocumentPurgeError(DocumentError):
+    """Raised when stored files could not be removed during account deletion.
+
+    Account deletion stops before deleting rows, so the student can retry after
+    the file is released; the message names document ids, never paths or text.
+    """
+
+
 class UnsupportedDocumentError(DocumentError):
     """Raised when a file is not an accepted PDF/DOCX/TXT document."""
 
@@ -70,9 +78,18 @@ class AuthError(ResearchInterBridgeError):
     ``account_missing``.
     """
 
-    def __init__(self, message: str, *, code: str = "auth_error") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "auth_error",
+        retry_after: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        #: Whole seconds the caller should wait before retrying, when known
+        #: (currently only ``account_locked``).
+        self.retry_after = retry_after
 
 
 class ConsentError(ResearchInterBridgeError):
@@ -85,3 +102,17 @@ class ConsentError(ResearchInterBridgeError):
     def __init__(self, message: str, *, code: str = "consent_required") -> None:
         super().__init__(message)
         self.code = code
+
+
+class RateLimitError(ResearchInterBridgeError):
+    """Raised when a caller has spent the request budget for a route.
+
+    ``retry_after`` is whole seconds and is sent verbatim as the ``Retry-After``
+    header, so a client can wait instead of retrying blindly.
+    """
+
+    code = "rate_limited"
+
+    def __init__(self, message: str, *, retry_after: int) -> None:
+        super().__init__(message)
+        self.retry_after = max(1, int(retry_after))

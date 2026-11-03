@@ -21,13 +21,26 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
 
-def same_origin(origin: str, host: str | None) -> bool:
-    """True when ``origin`` is the origin the request was addressed to."""
+def same_origin(origin: str, scheme: str, host: str | None) -> bool:
+    """True when ``origin`` is exactly the origin the request was addressed to.
+
+    Scheme is compared as well as host:port. An ``https`` origin and a request
+    that reached the app over ``http`` are different origins, and the app cannot
+    tell a TLS-terminating proxy from an on-path attacker without being told.
+    A deployment behind such a proxy must configure the server to trust its
+    ``Forwarded``/``X-Forwarded-*`` headers (for uvicorn: ``--proxy-headers`` and
+    ``--forwarded-allow-ips``); otherwise ``https`` browser requests are refused.
+    ``Origin: null`` (a sandboxed frame or a file:// page) never matches.
+    """
 
     if not host:
         return False
     parts = urlsplit(origin)
-    return parts.scheme in {"http", "https"} and parts.netloc.lower() == host.lower()
+    return (
+        parts.scheme in {"http", "https"}
+        and parts.scheme == scheme.lower()
+        and parts.netloc.lower() == host.lower()
+    )
 
 
 class OriginGuardMiddleware:
@@ -48,7 +61,9 @@ class OriginGuardMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if origin in self.allowed_origins or same_origin(origin, headers.get("host")):
+        if origin in self.allowed_origins or same_origin(
+            origin, scope.get("scheme", "http"), headers.get("host")
+        ):
             await self.app(scope, receive, send)
             return
 

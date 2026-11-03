@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -670,3 +672,49 @@ def test_get_account_rejects_an_unknown_user(connection: sqlite3.Connection) -> 
 
     assert excinfo.value.code == "account_missing"
     assert str(account_id) in str(excinfo.value)
+
+
+def test_scrypt_work_is_bounded_by_a_shared_semaphore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = 0
+    peak = 0
+    guard = threading.Lock()
+
+    def fake_scrypt(password: bytes, *, salt: bytes, n: int, r: int, p: int, dklen: int) -> bytes:
+        nonlocal active, peak
+        with guard:
+            active += 1
+            peak = max(peak, active)
+        try:
+            time.sleep(0.02)
+            return bytes(dklen)
+        finally:
+            with guard:
+                active -= 1
+
+    monkeypatch.setattr(auth.hashlib, "scrypt", fake_scrypt)
+
+    threads = [threading.Thread(target=hash_password, args=(PASSWORD,)) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert 1 <= peak <= auth.SCRYPT_MAX_CONCURRENCY
+    assert peak > 1  # the semaphore allows real parallelism, not one-at-a-time
+
+
+def test_a_locked_account_reports_how_long_to_wait(
+    connection: sqlite3.Connection, account: Account
+) -> None:
+    for _ in range(MAX_FAILED_ATTEMPTS):
+        with pytest.raises(AuthError):
+            authenticate(connection, email=EMAIL, password="wrong password here")
+
+    with pytest.raises(AuthError) as excinfo:
+        authenticate(connection, email=EMAIL, password=PASSWORD)
+
+    assert excinfo.value.code == "account_locked"
+    assert excinfo.value.retry_after is not None
+    assert 1 <= excinfo.value.retry_after <= int(LOCKOUT.total_seconds())

@@ -227,3 +227,17 @@ def test_session_cookie_name_must_be_a_cookie_token(value: str) -> None:
         return
     with pytest.raises(ConfigError, match="RIB_SESSION_COOKIE_NAME"):
         Settings.from_env({"RIB_SESSION_COOKIE_NAME": value})
+
+
+def test_cors_origins_are_normalised_to_lowercase() -> None:
+    settings = Settings.from_env(
+        {"RIB_CORS_ORIGINS": "HTTPS://App.Example.EDU, http://LOCALHOST:3000"}
+    )
+
+    assert settings.cors_origins == ("https://app.example.edu", "http://localhost:3000")
+
+
+def test_cors_origins_that_differ_only_in_case_are_one_entry() -> None:
+    settings = Settings(cors_origins=("https://App.Example.EDU", "https://app.example.edu"))
+
+    assert settings.cors_origins == ("https://app.example.edu",)
