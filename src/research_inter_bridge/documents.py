@@ -576,7 +576,13 @@ def delete_document(
     data_directory: Path | str,
     actor: str,
 ) -> bool:
-    """Delete one document (row + file). Returns ``False`` when it does not exist."""
+    """Delete one document (file + row). Returns ``False`` when it does not exist.
+
+    The file goes first: removing the row and then failing to unlink would leave
+    bytes that account deletion (which walks rows) could never find again. When
+    the file is locked, :class:`DocumentPurgeError` propagates and the row stays,
+    so the student can close the program and retry.
+    """
 
     record = connection.execute(
         "SELECT storage_path FROM student_documents WHERE id = ? AND user_id = ?",
@@ -584,6 +590,15 @@ def delete_document(
     ).fetchone()
     if record is None:
         return False
+
+    path = _resolve(record["storage_path"], data_directory)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise DocumentPurgeError(
+            f"could not remove the stored file for document {document_id}; "
+            "close any program using it and retry."
+        ) from exc
 
     with db.transaction(connection):
         connection.execute(
@@ -597,12 +612,6 @@ def delete_document(
             target_type="student_document",
             target_id=str(document_id),
         )
-
-    path = _resolve(record["storage_path"], data_directory)
-    try:
-        path.unlink(missing_ok=True)
-    except OSError:  # pragma: no cover - filesystem race/lock
-        logger.warning("document row deleted but file could not be removed id=%s", document_id)
     return True
 
 

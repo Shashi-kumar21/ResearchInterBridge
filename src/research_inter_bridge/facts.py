@@ -109,11 +109,23 @@ def store_facts(
 
     Idempotent: re-parsing the same document hits the unique
     ``(user_id, field, value, source)`` constraint and returns the existing ids.
+    A field already confirmed from this same document is skipped, so re-parsing
+    cannot resurrect the extracted value the student corrected or accepted.
     """
 
     source = f"document:{document_id}"
+    confirmed_fields = {
+        str(row["field"])
+        for row in connection.execute(
+            "SELECT field FROM profile_facts "
+            "WHERE user_id = ? AND source = ? AND status = 'confirmed'",
+            (user_id, source),
+        )
+    }
     ids: list[int] = []
     for fact in facts:
+        if fact.field_name in confirmed_fields:
+            continue
         ids.append(
             profiles.add_profile_fact(
                 connection,
@@ -213,6 +225,16 @@ def fact_groups(connection: sqlite3.Connection, user_id: int) -> tuple[FactGroup
     return tuple(groups)
 
 
+def fact_status(connection: sqlite3.Connection, *, user_id: int, fact_id: int) -> str | None:
+    """Return one fact's status for its owner, or ``None`` when it is not theirs."""
+
+    row = connection.execute(
+        "SELECT status FROM profile_facts WHERE id = ? AND user_id = ?",
+        (fact_id, user_id),
+    ).fetchone()
+    return None if row is None else str(row["status"])
+
+
 def _clean_fact_value(value: str) -> str:
     cleaned = " ".join(str(value).split())
     if not cleaned:
@@ -234,10 +256,13 @@ def confirm_fact(
 ) -> bool:
     """Confirm one fact for its owner, optionally replacing the extracted value.
 
-    Confirming a value rejects the competing *pending* candidates for the same
-    field, so a field cannot end up with two confirmed truths. The audit event
-    records the field name and whether a correction was supplied - never the
-    value itself, which may be personal data.
+    Confirming a value makes it the only confirmed row for its field: competing
+    pending **and** previously confirmed candidates are rejected in the same
+    transaction, so re-confirming a candidate that was auto-rejected earlier
+    cannot leave two confirmed truths. Confirming the already-confirmed row
+    without a correction is a no-op; with a correction the new value is applied.
+    The audit event records the field name and whether a correction was supplied
+    - never the value itself, which may be personal data.
     """
 
     row = connection.execute(
@@ -246,7 +271,7 @@ def confirm_fact(
     ).fetchone()
     if row is None:
         return False
-    if row["status"] == "confirmed":
+    if row["status"] == "confirmed" and corrected_value is None:
         return True
 
     value = row["value"] if corrected_value is None else _clean_fact_value(corrected_value)
@@ -260,7 +285,7 @@ def confirm_fact(
             )
             cursor = connection.execute(
                 "UPDATE profile_facts SET status = 'rejected' "
-                "WHERE user_id = ? AND field = ? AND id != ? AND status = 'pending'",
+                "WHERE user_id = ? AND field = ? AND id != ? AND status != 'rejected'",
                 (user_id, row["field"], fact_id),
             )
             superseded = cursor.rowcount
@@ -316,6 +341,37 @@ def reject_fact(connection: sqlite3.Connection, *, user_id: int, fact_id: int, a
     return True
 
 
+def update_fact(
+    connection: sqlite3.Connection,
+    *,
+    user_id: int,
+    fact_id: int,
+    actor: str,
+    status: str,
+    corrected_value: str | None = None,
+) -> bool:
+    """Apply a student's decision to one candidate.
+
+    A correction belongs to confirmation only; rejecting one answers with an
+    actionable error instead of quietly ignoring the extra value. Keeping this
+    rule here means the HTTP route only maps the request body.
+    """
+
+    if status == "confirmed":
+        return confirm_fact(
+            connection,
+            user_id=user_id,
+            fact_id=fact_id,
+            actor=actor,
+            corrected_value=corrected_value,
+        )
+    if status == "rejected":
+        if corrected_value is not None:
+            raise ProfileError("corrected_value is only accepted when confirming a fact.")
+        return reject_fact(connection, user_id=user_id, fact_id=fact_id, actor=actor)
+    raise ProfileError("status must be 'confirmed' or 'rejected'.")
+
+
 def _gpa_updates(value: str, current_scale: float | None) -> dict[str, Any]:
     match = _GPA_VALUE_RE.match(value.strip())
     if match is None:
@@ -347,10 +403,19 @@ def apply_confirmed_facts_to_profile(
 
     Defaults are conservative: blank profile fields are filled, values the student
     already typed are left alone unless ``overwrite=True`` is passed explicitly.
+    A field name outside :data:`APPLICABLE_FIELDS` is refused instead of being
+    silently ignored, so a client typo cannot look like "nothing to apply".
     """
 
     profile = profiles.load_profile(connection, user_id)
-    wanted = APPLICABLE_FIELDS if fields is None else (APPLICABLE_FIELDS & fields)
+    if fields is not None:
+        unknown = fields - APPLICABLE_FIELDS
+        if unknown:
+            raise ProfileError(
+                f"facts cannot be applied to {', '.join(sorted(unknown))}; "
+                f"applicable fields: {', '.join(sorted(APPLICABLE_FIELDS))}."
+            )
+    wanted = APPLICABLE_FIELDS if fields is None else fields
     updates: dict[str, Any] = {}
 
     for fact in profiles.confirmed_facts(connection, user_id):
