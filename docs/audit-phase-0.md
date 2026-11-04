@@ -289,7 +289,7 @@ makes the existing `register`/`login` safe to expose.
   `Retry-After`, `account_locked` → `429` with `Retry-After`, and a failed file
   purge → `409 deletion_incomplete`. `error_response` accepts headers, and the
   generic HTTP-error handler forwards Starlette's own headers.
-* scrypt now shares a `BoundedSemaphore(4)`; the bound is on hashing work, so a
+* scrypt shares a per-process `BoundedSemaphore(4)`; the bound is on hashing work, so a
   login flood queues threads instead of multiplying ~16 MiB allocations.
 * `documents.purge_user_documents` removes files **before** rows and raises
   `DocumentPurgeError` naming ids when a file is locked, so account deletion

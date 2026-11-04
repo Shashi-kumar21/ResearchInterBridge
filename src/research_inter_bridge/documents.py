@@ -511,9 +511,9 @@ def purge_user_documents(
 
     Called by the account-deletion flow before the user row is removed, because
     SQLite cascades rows but knows nothing about files on disk. Files go first:
-    if one is locked, the row that names it still exists, nothing is deleted and
-    the student can retry. Deleting rows first would strand the bytes with no
-    record of their names.
+    if one is locked, the row that names it still exists, no rows are deleted and
+    the student can retry, while files already unlinked stay gone. Deleting rows
+    first would strand the bytes with no record of their names.
 
     Returns the number of documents removed and raises
     :class:`DocumentPurgeError` (naming ids only) when a file cannot be removed.
