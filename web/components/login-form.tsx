@@ -7,6 +7,7 @@ import { useState, type FormEvent } from "react";
 
 import { loginAccount, type SessionResponse } from "@/lib/api";
 import { describeApiError } from "@/lib/errors";
+import { useHydrated } from "@/lib/hydration";
 
 /**
  * Sign-in form.
@@ -17,6 +18,7 @@ import { describeApiError } from "@/lib/errors";
  * knows whether to wait or to reset the password.
  */
 export function LoginForm() {
+  const hydrated = useHydrated();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -58,7 +60,7 @@ export function LoginForm() {
   }
 
   return (
-    <form className="panel" onSubmit={onSubmit}>
+    <form className="panel" method="post" onSubmit={onSubmit}>
       {error ? (
         <p className="alert" role="alert">
           {error}
@@ -92,7 +94,7 @@ export function LoginForm() {
       </div>
 
       <div className="button-row">
-        <button className="button" type="submit" disabled={submitting}>
+        <button className="button" type="submit" disabled={!hydrated || submitting}>
           {submitting ? "Signing in…" : "Sign in"}
         </button>
         <a href="/register">Create an account instead</a>

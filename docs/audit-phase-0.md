@@ -329,8 +329,13 @@ makes the existing `register`/`login` safe to expose.
   contents), the account surface is `api` (new label "the HTTP API"), and the
   website card is now `available` on `web` because the screens exist. The web
   canary test was flipped deliberately and still proves the predicate is not dead.
-* Frontend tests: 56 total. New: API client (URL, JSON body, credentials, error
+* Frontend tests: 61 total. New: API client (URL, JSON body, credentials, error
   envelope, `Retry-After`, 204, non-JSON, network failure), error copy, roadmap
-  honesty, and jsdom/Testing Library tests for all three forms.
+  honesty, jsdom/Testing Library tests for all three forms (including a grant
+  whose follow-up refresh fails and a 401 while granting), server-rendered HTML
+  proving the submit buttons cannot fire natively before hydration, and
+  `lib/security-headers.test.ts` pinning `form-action 'none'`.
 * Dev-only dependencies: `@testing-library/react`, `user-event`, `jest-dom`,
   `jsdom`; justified in ADR-013 because form behaviour cannot be seen by pytest.
+  `engines` now names the real floor (`^22.13.0 || ^24.0.0 || >=26.0.0`), which
+  is the intersection of vitest's and jsdom's ranges; `.nvmrc`/CI use Node 24.

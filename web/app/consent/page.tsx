@@ -21,6 +21,12 @@ export default function ConsentPage() {
           ledger for your account, not a browser preference, so it survives a different device or a
           cleared cookie jar.
         </p>
+        <noscript>
+          <p className="alert">
+            This page needs JavaScript to read your consent ledger from the API. No consent can be
+            granted from a page that cannot load it.
+          </p>
+        </noscript>
         <ConsentManager />
         <p className="fine-print">
           Gmail access is recorded now but stays unused until the OAuth connection exists in a later
