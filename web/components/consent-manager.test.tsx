@@ -136,6 +136,21 @@ describe("ConsentManager", () => {
     expect(logoutCall).toBeDefined();
   });
 
+  it("treats a 401 while signing out as already signed out", async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(CONSENTS))
+      .mockResolvedValueOnce(
+        json({ error: { code: "invalid_session", message: "authentication required." } }, 401),
+      );
+    const user = userEvent.setup();
+    render(<ConsentManager />);
+
+    await screen.findByRole("heading", { name: "Gmail access" });
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(await screen.findByRole("heading", { name: "You are not signed in" })).toBeVisible();
+  });
+
   it("offers a retry when the ledger cannot be loaded", async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }));
     render(<ConsentManager />);

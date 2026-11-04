@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RegisterForm } from "./register-form";
@@ -66,6 +67,16 @@ function mockCatalogueThen(session: Response): void {
 }
 
 describe("RegisterForm", () => {
+  it("cannot submit natively before the consent texts load", () => {
+    // Nothing has been fetched during server rendering, so submit must already
+    // be disabled and the form must never default to a GET.
+    const html = renderToString(<RegisterForm />);
+
+    expect(html).toContain('method="post"');
+    expect(html).not.toMatch(/method="get"/i);
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Create account<\/button>/);
+  });
+
   it("renders the consent text from the API and keeps submit disabled until required consents are ticked", async () => {
     mockCatalogueThen(json(SESSION, 201));
     const user = userEvent.setup();

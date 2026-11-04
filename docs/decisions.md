@@ -232,8 +232,11 @@ selects the API origin at build time (default `http://localhost:8000`).
 
 **Consequences:**
 
-* JavaScript is required for the three forms. With it disabled the forms cannot
-  submit at all; nothing posts to a surprising fallback URL.
+* JavaScript is required for the three forms. The submit buttons stay disabled
+  until hydration (`useHydrated`, a `useSyncExternalStore` server/client split),
+  both forms declare `method="post"`, and `form-action 'none'` in the CSP blocks
+  every native submission — so a click before hydration, or with JavaScript
+  disabled, cannot put a password in the URL. Nothing posts to a fallback URL.
 * The site and API must be same-site for the `SameSite=Lax` cookie in
   development: use `http://localhost:3000` and `http://localhost:8000`, not a mix
   with `127.0.0.1`. Production needs HTTPS and `RIB_COOKIE_SECURE=true`.

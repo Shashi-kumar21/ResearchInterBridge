@@ -20,6 +20,12 @@ export default function RegisterPage() {
           The account stores your email, a salted password hash and the consents you tick below.
           The browser never receives the hash, and the session cookie is HttpOnly.
         </p>
+        <noscript>
+          <p className="alert">
+            Creating an account needs JavaScript: the page loads the consent texts from the API and
+            keeps the button disabled until it can. Nothing is submitted without it.
+          </p>
+        </noscript>
         <RegisterForm />
         <p className="fine-print">
           Exporting your account data and deleting the account are available through the HTTP API

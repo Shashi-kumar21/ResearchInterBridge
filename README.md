@@ -214,8 +214,11 @@ agrees to matches the policy version the server records. Product copy lives in
 surface line must agree with its badge, email sending cannot be `available`, and
 only capabilities that really run in a browser may claim the `web` surface. There
 are no client components outside the account forms, no hand-written analytics, no
-external fonts or images, and the build itself makes no network request. Tested
-on Node 24 (`web/.nvmrc`); `web/README.md` explains the constraints.
+external fonts or images, and the build itself makes no network request. Submit
+buttons stay disabled until React hydrates, both forms declare `method="post"`
+and the CSP sets `form-action 'none'`, so a pre-hydration click cannot put a
+password in the URL. Tested on Node 24 (`web/.nvmrc`); `web/README.md` explains
+the constraints.
 
 ## Layout
 

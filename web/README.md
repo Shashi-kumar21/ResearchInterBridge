@@ -20,6 +20,9 @@ npm run dev      # http://localhost:3000
 `http://localhost:8000` during development: the session cookie is `SameSite=Lax`,
 and `localhost` and `127.0.0.1` are different sites to the browser.
 
+Node: `package.json` declares the real floor, `^22.13.0 || ^24.0.0 || >=26.0.0`
+(vitest and jsdom do not support older Node); `.nvmrc` and CI use Node 24.
+
 ## What the screens do
 
 | Page | Behaviour |
@@ -55,10 +58,12 @@ npm test          # vitest
 npm run build
 ```
 
-- `lib/*.test.ts` — roadmap invariants, API client (mocked `fetch`), error copy.
+- `lib/*.test.ts` — roadmap invariants, API client (mocked `fetch`), error copy,
+  security headers (`form-action 'none'`).
 - `components/*.test.tsx` — the three forms under jsdom with Testing Library:
   consent gating, posted bodies, duplicate-email message, lockout `Retry-After`,
-  401 handling, grant-then-refresh, sign-out.
+  401 handling, grant-then-refresh, sign-out, and server-rendered HTML proving
+  the submit buttons cannot fire natively before hydration.
 
 Dev-only dependencies added with the screens: `@testing-library/react`,
 `@testing-library/user-event`, `@testing-library/jest-dom` and `jsdom`. They are
@@ -97,14 +102,18 @@ in the data.
   makes no network request.
 - **No UI framework.** Plain CSS with design tokens in `app/globals.css`; the only
   client components are the three account forms.
+- **No native form submission.** The forms declare `method="post"`, their submit
+  buttons stay disabled until React has hydrated (`lib/hydration.ts`), and the
+  CSP sets `form-action 'none'`. A click before hydration or with JavaScript
+  disabled cannot fall back to a GET that puts a password in the URL; a
+  `<noscript>` note says JavaScript is needed.
 - **Consent text comes from the server.** A local copy would drift from the text
   recorded against a policy version.
 - **Security headers** (`nosniff`, `DENY` framing, referrer policy, permissions
   policy, CSP subset — `base-uri`, `object-src`, `frame-ancestors`,
-  `form-action`) are set in `next.config.ts`. `script-src` still needs a
-  per-request nonce because Next emits inline bootstrap scripts; the forms
-  submit with JavaScript, and with JavaScript disabled they simply cannot submit
-  (nothing is silently posted somewhere else).
+  `form-action 'none'`) are set in `next.config.ts`; `lib/security-headers.test.ts`
+  pins them. `script-src` still needs a per-request nonce because Next emits
+  inline bootstrap scripts.
 - `react/no-danger` is an ESLint error: third-party text must never be injected
   as HTML. It does not cover `href`/`src`, so later phases validate links.
 - ESLint is pinned to `^9.39` because `eslint-plugin-react` (via
