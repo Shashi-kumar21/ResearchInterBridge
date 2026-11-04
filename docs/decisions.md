@@ -323,3 +323,63 @@ over the services:
   facts without a profile is a `404` for the same reason.
 * The Python set of runtime dependencies grows by one (`python-multipart`).
   It is small, MIT-licensed and only used by the upload endpoint.
+
+## ADR-015 — Content screens treat the API as the source of truth
+
+**Status:** accepted 2026-11-04 · **Decided by:** Dev (within ADR-013) · **Spec:** `task.md` §3.2, §3.3
+
+The content API from ADR-014 had no browser surface: a student could register and
+review consent, but had to use the CLI for the profile, a document upload and
+fact confirmation. That is not the product `task.md` describes.
+
+**Decision:** add three client screens — `/onboarding`, `/documents` and
+`/facts` — over the existing routes. They are client components because every
+read and write is authenticated server state; the page shell, header and landing
+page stay server components. `web/lib/api.ts` gains `PUT`, `PATCH` and multipart
+support, and `web/lib/errors.ts` gains the content codes from ADR-014.
+
+**Why this shape:**
+
+* `GET /api/profile` returning `404 profile_missing` means "not started", not
+  "broken". The onboarding screen shows a blank form in that case and an error
+  panel for every other failure, so the deliberate absence of an invented empty
+  row survives all the way to the UI.
+* `PUT` is a full replacement, so the form sends every editable field, including
+  `null` for a cleared optional value. The server still owns `user_id`,
+  `consent_given_at` and the timestamps. The screen never PATCHes a subset and
+  hopes the omitted fields survive.
+* An upload is a `FormData` body. The shared client deliberately omits
+  `Content-Type` for it; setting JSON or even `multipart/form-data` by hand
+  breaks the boundary. The list is reloaded from the API, not reconstructed from
+  the upload response alone.
+* A parse failure is persisted by the server (`status=failed`, `parse_error`), so
+  the screen refreshes the list after the error and shows the reason next to the
+  document. Hiding a failed row would make a scan look like a lost upload.
+* Confirming a fact can reject several competing rows in one transaction. The
+  screen therefore refreshes the whole fact list after each decision instead of
+  patching one row in local state. A confirmed fact has no "unconfirm" button
+  because the server forbids rejecting it; the student confirms a different
+  candidate to replace it.
+* Applying facts is explicit about `overwrite`. The default fills blank profile
+  fields only; a typed value is kept unless the student ticks the overwrite
+  checkbox. A missing profile still answers `404 profile_missing`, and the page
+  says to save the profile first.
+* Every failure branches on `ApiError.code`/`status`: `401` returns to the
+  signed-out panel, and content codes get student-facing copy. No profile,
+  document or fact response is cached in the browser.
+
+**Consequences:**
+
+* Six client components now exist (register, sign in, consent, profile,
+  documents, facts). The `<noscript>` note on each content page says JavaScript
+  is required; no content can be read or saved without the API.
+* The document bytes are held only long enough to construct the upload request;
+  no file or extracted text is written to local storage. The page renders
+  server-provided metadata, never a document body.
+* The fact screen's "applicable fields" list mirrors `facts.APPLICABLE_FIELDS`
+  for its hint. The API remains the authority: a mismatch changes which guidance
+  is shown, not what is applied.
+* The frontend suite grows from 61 to 100 tests. The new coverage is the client
+  request shapes (including multipart), content error copy, byte/date formatting,
+  profile new/existing/save/retry, document upload/parse/delete and locked-file
+  failure, conflict display, confirm/reject/correct, and apply with overwrite.

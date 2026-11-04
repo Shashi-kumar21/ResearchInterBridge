@@ -2,7 +2,6 @@
 
 // Plain anchors are deliberate in this client component: they keep the forms
 // renderable in tests without the App Router, and these pages are static.
-/* eslint-disable @next/next/no-html-link-for-pages */
 
 import { useEffect, useState, type FormEvent } from "react";
 
@@ -91,15 +90,15 @@ export function RegisterForm() {
           <time dateTime={created.expires_at}>{created.expires_at}</time>.
         </p>
         <p className="hint">
-          Next: review your consent choices, or go back to the start page. Profile and document
-          screens are not built yet.
+          Next: fill in your profile, then upload a CV or transcript. Reviewing consent is
+          optional until a screen needs a consent you have not granted.
         </p>
         <div className="button-row">
-          <a className="button" href="/consent">
-            Review consent choices
+          <a className="button" href="/onboarding">
+            Set up your profile
           </a>
-          <a className="button button-quiet" href="/">
-            Back to the start page
+          <a className="button button-quiet" href="/consent">
+            Review consent choices
           </a>
         </div>
       </div>

@@ -1,7 +1,6 @@
 "use client";
 
 // Plain anchors are deliberate: see the note in register-form.tsx.
-/* eslint-disable @next/next/no-html-link-for-pages */
 
 import { useState, type FormEvent } from "react";
 
@@ -48,11 +47,11 @@ export function LoginForm() {
           <time dateTime={session.expires_at}>{session.expires_at}</time>.
         </p>
         <div className="button-row">
-          <a className="button" href="/consent">
-            Consent and privacy settings
+          <a className="button" href="/onboarding">
+            Continue to your profile
           </a>
-          <a className="button button-quiet" href="/">
-            Back to the start page
+          <a className="button button-quiet" href="/consent">
+            Consent and privacy settings
           </a>
         </div>
       </div>

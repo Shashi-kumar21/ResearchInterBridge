@@ -58,41 +58,43 @@ export const CAPABILITIES: readonly Capability[] = [
     title: "Academic profile",
     detail:
       "One validated profile per student — degree, year, coursework, skills, " +
-      "research keywords, target countries and internship dates. Every read is " +
-      "scoped to the owner.",
+      "research keywords, target countries and internship dates. It is edited " +
+      "on this site with a completeness report, every read is scoped to the " +
+      "owner, and the same data is reachable from the command line.",
     status: "available",
-    surface: "cli",
+    surface: "web",
   },
   {
     id: "documents",
     title: "CV and transcript intake",
     detail:
-      "PDF, DOCX and TXT are checked by content rather than extension, capped at " +
-      "10 MB, and stored under a hash-named file in the student's own directory. " +
-      "Malformed or mismatched files are rejected at upload; a scan or a " +
-      "password-protected PDF is kept but reported as failed with the reason " +
+      "Upload a PDF, DOCX or TXT on this site. Files are checked by content " +
+      "rather than extension, capped at 10 MB, and stored under a hash-named " +
+      "file in the student's own directory. Malformed files are rejected; a scan " +
+      "or a password-protected PDF is kept but reported as failed with the reason " +
       "(OCR is not available yet).",
     status: "available",
-    surface: "cli",
+    surface: "web",
   },
   {
     id: "facts",
     title: "Fact confirmation",
     detail:
-      "Extracted facts stay pending until you confirm or correct them. When two " +
-      "documents disagree the conflict is shown instead of one value silently " +
-      "winning, and only confirmed facts may ever appear in a draft.",
+      "The review screen shows extracted facts until you confirm, correct or " +
+      "reject them. When two documents disagree the conflict is shown instead of " +
+      "one value silently winning, and only confirmed facts may ever appear in a " +
+      "draft.",
     status: "available",
-    surface: "cli",
+    surface: "web",
   },
   {
     id: "web-shell",
     title: "Website and account screens",
     detail:
-      "This page plus register, sign in and consent screens. Keyboard accessible, " +
-      "no tracking scripts, and the consent text is fetched from the server " +
-      "instead of copied into the page. Onboarding, profile and upload screens " +
-      "are still to come.",
+      "This page plus register, sign in, consent, onboarding, profile, document " +
+      "upload and fact-review screens. Keyboard accessible, no tracking scripts, " +
+      "and the consent text is fetched from the server instead of copied into " +
+      "the page.",
     status: "available",
     surface: "web",
   },

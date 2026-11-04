@@ -12,9 +12,12 @@ export function SiteHeader() {
       </Link>
       <span className="phase">Phase 2 · no email can be sent yet</span>
       <nav className="site-nav" aria-label="Account">
-        <Link href="/register">Create account</Link>
-        <Link href="/login">Sign in</Link>
+        <Link href="/onboarding">Profile</Link>
+        <Link href="/documents">Documents</Link>
+        <Link href="/facts">Facts</Link>
         <Link href="/consent">Consent</Link>
+        <Link href="/login">Sign in</Link>
+        <Link href="/register">Create account</Link>
       </nav>
     </header>
   );

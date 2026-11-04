@@ -4,11 +4,12 @@ Local-first assistant that helps students find international research
 internships, identify relevant professors and papers, prepare evidence-backed
 outreach, and send approved email through connected accounts.
 
-Status: **Phase 2 — auth, profile, documents, JSON API and the web shell**.
-Accounts, consent, sessions, profiles, document ingestion (PDF/DOCX/TXT) and
-candidate-fact extraction work from the CLI and over a small HTTP API;
-the Next.js landing page is live in `web/`. Research discovery, OAuth and sending
-are not implemented yet, and nothing in this repository can send email.
+Status: **Phase 2 — auth, profile, documents, JSON API and the web screens**.
+Accounts, consent, sessions, profiles, document ingestion (PDF/DOCX/TXT),
+candidate-fact confirmation and apply-to-profile work from the CLI and the HTTP
+API, and the Next.js site in `web/` can register, sign in, edit the profile,
+upload a document and review facts. Research discovery, OAuth and sending are
+not implemented yet, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
 * License: MIT (see `LICENSE`), decided by the Owner on 2026-11-02.
@@ -206,8 +207,9 @@ tests never call live APIs and never send email.
 
 ## Frontend (`web/`)
 
-Next.js + TypeScript (ADR-010/ADR-013): the landing page plus register, sign in
-and consent screens that talk to the JSON API.
+Next.js + TypeScript (ADR-010/ADR-013/ADR-015): the landing page plus register,
+sign in, consent, onboarding/profile, documents and fact-review screens that
+talk to the JSON API.
 
 ```powershell
 # terminal 1: API with the site's origin allowed and a session cookie
@@ -231,13 +233,15 @@ The consent texts on the registration form are fetched from
 agrees to matches the policy version the server records. Product copy lives in
 `web/lib/roadmap.ts` and `web/lib/roadmap.test.ts` enforces its shape: a card's
 surface line must agree with its badge, email sending cannot be `available`, and
-only capabilities that really run in a browser may claim the `web` surface. There
-are no client components outside the account forms, no hand-written analytics, no
-external fonts or images, and the build itself makes no network request. Submit
-buttons stay disabled until React hydrates, both forms declare `method="post"`
-and the CSP sets `form-action 'none'`, so a pre-hydration click cannot put a
-password in the URL. Tested on Node 24 (`web/.nvmrc`); `web/README.md` explains
-the constraints.
+only capabilities that really run in a browser may claim the `web` surface. The
+content screens read and write server state, never a browser copy: a missing
+profile is a new form, a failed parse is shown with the server's reason, and a
+fact confirmation refreshes the whole field because one choice can reject
+competing candidates. There are no hand-written analytics, external fonts or
+images, and the build itself makes no network request. Submit buttons stay
+disabled until React hydrates, every form declares `method="post"` and the CSP
+sets `form-action 'none'`, so a pre-hydration click cannot submit natively.
+Tested on Node 24 (`web/.nvmrc`); `web/README.md` explains the constraints.
 
 ## Layout
 
@@ -256,7 +260,7 @@ src/research_inter_bridge/    Python package
   api/                        FastAPI app: sessions, CORS, consent and account routes
   cli.py / __main__.py        migrate, health, serve, auth, consent, document and fact commands
 tests/                        pytest suite (offline, synthetic data only)
-web/                          Next.js + TypeScript site (landing + account screens)
+web/                          Next.js + TypeScript site (landing, account and content screens)
 web/lib/api.ts                typed browser client for the JSON API
 web/lib/roadmap.ts            capability/limit/workflow data the page renders
 docs/                         audit report, decisions, architecture notes

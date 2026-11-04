@@ -35,14 +35,30 @@ export function describeApiError(error: unknown): string {
         ? `Too many attempts. Try again in ${formatWait(error.retryAfterSeconds)}.`
         : "Too many attempts. Try again later.";
     case "consent_required":
-      return "Tick every consent marked as required, then try again.";
+      return "A required consent is missing. Grant it on the consent page, then try again.";
     case "unknown_consent":
       return "This page asked for a consent the server does not know. Reload the page and try again.";
     case "invalid_session":
       return "Your session has expired. Sign in again.";
-    case "network_error":
+    case "profile_missing":
+      return "No profile is saved yet. Fill in your profile first, then try again.";
+    case "invalid_profile":
       return error.message;
+    case "document_too_large":
+      return "That file is larger than the 10 MB limit. Compress it or upload a smaller version.";
+    case "unsupported_document":
+      return "Upload a PDF, DOCX or TXT file. Other formats are not accepted.";
+    case "document_unreadable":
+      return "The text could not be extracted from that document. A scanned or password-protected PDF needs OCR, which is not available yet.";
+    case "document_missing":
+      return "That document is no longer available. Reload the list and try again.";
+    case "fact_missing":
+      return "That fact is no longer available. Reload the list and try again.";
+    case "deletion_incomplete":
+      return "The document was not deleted because its stored file is in use. Close any program using it and try again.";
     case "invalid_input":
+      return error.message;
+    case "network_error":
       return error.message;
     default:
       return error.status === 422

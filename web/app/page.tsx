@@ -60,9 +60,9 @@ export default function HomePage() {
             </a>
           </div>
           <p className="note">
-            This is an early build. You can create an account, sign in and review consent on this
-            site today; profiles, documents and confirmed facts are real and tested through the
-            Python CLI. Nothing in the repository can send email.
+            This is an early build. You can create an account, sign in, fill in your profile,
+            upload a CV or transcript and confirm the facts extracted from it on this site today.
+            Nothing in the repository can send email.
           </p>
         </section>
 
