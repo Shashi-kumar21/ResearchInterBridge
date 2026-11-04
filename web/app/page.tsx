@@ -7,6 +7,9 @@ import {
   surfaceLabel,
   type Capability,
 } from "@/lib/roadmap";
+import Link from "next/link";
+
+import { SiteHeader } from "@/components/site-header";
 
 const REPOSITORY_URL = "https://github.com/Shashi-kumar21/ResearchInterBridge";
 
@@ -30,10 +33,7 @@ export default function HomePage() {
 
   return (
     <>
-      <header className="site-header">
-        <span className="brand">ResearchInterBridge</span>
-        <span className="phase">Phase 2 · no email can be sent yet</span>
-      </header>
+      <SiteHeader />
 
       <main id="main">
         <section className="hero" aria-labelledby="hero-title">
@@ -49,17 +49,20 @@ export default function HomePage() {
             account — never a bulk campaign.
           </p>
           <div className="hero-actions">
-            <a className="button" href={REPOSITORY_URL}>
+            <Link className="button" href="/register">
+              Create an account
+            </Link>
+            <Link className="button button-quiet" href="/login">
+              Sign in
+            </Link>
+            <a className="button button-quiet" href={REPOSITORY_URL}>
               Read the source on GitHub
-            </a>
-            <a className="button button-quiet" href="#status">
-              What works today
             </a>
           </div>
           <p className="note">
-            This is an early build. The backend runs from the command line and
-            nothing in the repository can send email; accounts, profiles,
-            documents and confirmed facts are real and tested.
+            This is an early build. You can create an account, sign in and review consent on this
+            site today; profiles, documents and confirmed facts are real and tested through the
+            Python CLI. Nothing in the repository can send email.
           </p>
         </section>
 

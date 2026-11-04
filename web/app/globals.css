@@ -14,6 +14,8 @@
   --progress-soft: #f6e9d3;
   --planned: #4a5258;
   --planned-soft: #e8e6df;
+  --danger: #8c1d18;
+  --danger-soft: #fbe9e7;
   --focus: #0b63c5;
   --shadow: 0 1px 2px rgb(20 24 27 / 6%), 0 8px 24px rgb(20 24 27 / 4%);
 
@@ -41,6 +43,8 @@
     --progress-soft: #2a2113;
     --planned: #b3bcc1;
     --planned-soft: #1f252a;
+    --danger: #ffb4ab;
+    --danger-soft: #3a1413;
     --focus: #7fb2ff;
     --shadow: none;
   }
@@ -156,6 +160,21 @@ main > section,
   font-size: 0.85rem;
   font-variant: small-caps;
   letter-spacing: 0.08em;
+}
+
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.1rem;
+  font-size: 0.92rem;
+}
+
+.site-nav a {
+  text-decoration: none;
+}
+
+.site-nav a:hover {
+  text-decoration: underline;
 }
 
 .hero {
@@ -344,6 +363,191 @@ main > section {
 .fine-print {
   margin-top: 0.75rem;
   font-size: 0.85rem;
+}
+
+/* Account, sign-in and consent pages. One narrow column; the forms are the
+   only interactive part of the site, so the layout stays out of their way. */
+.page {
+  width: min(100% - 2.5rem, 44rem);
+  margin-inline: auto;
+  padding-block: clamp(2rem, 5vw, 4rem);
+}
+
+.page h1 {
+  font-size: clamp(1.8rem, 1.3rem + 2vw, 2.8rem);
+}
+
+.page-lead {
+  max-width: 38rem;
+  margin-bottom: 1.75rem;
+  color: var(--muted);
+}
+
+.panel {
+  padding: clamp(1.25rem, 3vw, 2rem);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.panel h2 {
+  margin-bottom: 0.75rem;
+  font-size: 1.35rem;
+}
+
+.panel p + p {
+  margin-top: 0.75rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1.1rem;
+}
+
+.field label,
+.consent-fieldset legend {
+  font-weight: 600;
+  font-size: 0.97rem;
+}
+
+.field input {
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.consent-fieldset {
+  margin: 0 0 1.25rem;
+  padding: 1rem 0 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.consent-fieldset legend {
+  padding-right: 0.5rem;
+}
+
+.consent-fieldset > .hint {
+  margin-bottom: 0.75rem;
+}
+
+.consent-options {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.check {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--rule);
+}
+
+.check input {
+  flex-shrink: 0;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.25rem;
+  accent-color: var(--accent);
+}
+
+.check label {
+  font-size: 0.95rem;
+}
+
+.consent-kind {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+}
+
+.alert {
+  margin-block: 0 1.1rem;
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--danger);
+  border-radius: 4px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.94rem;
+}
+
+.alert-ok {
+  border-left-color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ink);
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1.25rem;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.fine-print {
+  margin-top: 1.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.status-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.status-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+
+.status-list h3 {
+  margin-bottom: 0.25rem;
+  font-size: 1rem;
+}
+
+.status-list p {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.granted {
+  color: var(--ok);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
 }
 
 @media (prefers-reduced-motion: reduce) {

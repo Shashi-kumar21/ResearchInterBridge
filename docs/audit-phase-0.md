@@ -198,8 +198,8 @@ optimization) have no predecessor.
 | 2c-2 | Accounts, scrypt password hashing, lockout, versioned consent, sessions, export/delete | merged (PR #9) |
 | 2d-1 | Next.js + TypeScript shell: landing page, honest capability model, frontend CI job | merged (PR #10, ADR-010) |
 | 2d-2 | FastAPI auth/consent/account endpoints, cookie sessions, CORS + origin guard, API tests | merged (PR #11, ADR-012) |
-| 2d-3a | API hardening: per-address rate limits, bounded scrypt, purge ordering, scheme-aware origin guard | this PR |
-| 2d-3b | Register/login/consent screens wired to the API | next |
+| 2d-3a | API hardening: per-address rate limits, bounded scrypt, purge ordering, scheme-aware origin guard | merged (PR #12) |
+| 2d-3b | Register, sign-in and consent screens wired to the JSON API | this PR (ADR-013) |
 | 2d-4 | Onboarding, profile and document upload screens | planned |
 
 Phase 2c-2 notes for reviewers:
@@ -306,3 +306,31 @@ makes the existing `register`/`login` safe to expose.
   short-window sweep not deleting a live long-window counter, route-level 429 +
   `Retry-After`, limiter-before-credentials, no-store, host-only cookie,
   scheme-aware origin guard, purge failure and retry, and the scrypt bound.
+
+## 16. Phase 2d-3b notes (account screens)
+
+* Three client components (`components/register-form.tsx`, `login-form.tsx`,
+  `consent-manager.tsx`) are the only browser-side code. Every other page stays a
+  server component; the shared header is one too.
+* `web/lib/api.ts` is the single client. It sends `credentials: "include"`,
+  converts the error envelope into `ApiError` with the stable code and
+  `Retry-After` seconds, and never reads or stores a session token.
+* The registration form fetches `GET /api/consents/catalogue`; the exact server
+  texts are rendered, and submit stays disabled until they load and the two
+  required kinds are ticked. No consent text is duplicated in the site.
+* `/login` maps unknown email and wrong password to one sentence; `429` quotes
+  the wait. `/consent` reads the ledger, grants a missing kind, and signs out
+  through `POST /api/auth/logout`; signed out it links to the forms.
+* Backend change in the same slice: `Access-Control-Expose-Headers:
+  Retry-After`, otherwise a browser hides the header from the sign-in form. Tested
+  in `tests/test_api.py`.
+* Roadmap copy corrected as QA requested in PR #11: the account card no longer
+  says "everything you uploaded" (export returns account data, not file
+  contents), the account surface is `api` (new label "the HTTP API"), and the
+  website card is now `available` on `web` because the screens exist. The web
+  canary test was flipped deliberately and still proves the predicate is not dead.
+* Frontend tests: 56 total. New: API client (URL, JSON body, credentials, error
+  envelope, `Retry-After`, 204, non-JSON, network failure), error copy, roadmap
+  honesty, and jsdom/Testing Library tests for all three forms.
+* Dev-only dependencies: `@testing-library/react`, `user-event`, `jest-dom`,
+  `jsdom`; justified in ADR-013 because form behaviour cannot be seen by pytest.

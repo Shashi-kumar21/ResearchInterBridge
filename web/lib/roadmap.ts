@@ -3,14 +3,15 @@
  *
  * The site is the public face of an in-progress product, so the copy is data
  * here instead of prose in JSX: `roadmap.test.ts` asserts the invariants that
- * keep it honest (nothing unbuilt is labelled available, nothing is claimed to
- * run in the browser while the only surface is the Python CLI).
+ * keep it honest (nothing unbuilt is labelled available, a card's surface line
+ * agrees with its badge, and only capabilities that really work in a browser
+ * are marked `available` on the web surface).
  */
 
 export type CapabilityStatus = "available" | "in-progress" | "planned";
 
 /** Where a capability can be used today. */
-export type CapabilitySurface = "cli" | "web";
+export type CapabilitySurface = "cli" | "api" | "web";
 
 export interface Capability {
   readonly id: string;
@@ -29,6 +30,7 @@ export const STATUS_LABELS: Record<CapabilityStatus, string> = {
 /** What the badge and the "available on" line call each surface. */
 export const SURFACE_LABELS: Record<CapabilitySurface, string> = {
   cli: "the command line",
+  api: "the HTTP API",
   web: "the website",
 };
 
@@ -45,10 +47,11 @@ export const CAPABILITIES: readonly Capability[] = [
     detail:
       "Registration records versioned consent before anything is stored. " +
       "Passwords are kept as salted scrypt hashes, five wrong attempts lock an " +
-      "account for 15 minutes, and sessions expire. Everything you uploaded can " +
-      "be exported or deleted through the API; the account screens are planned.",
+      "account for 15 minutes, and sessions expire. Your account data can be " +
+      "exported, or deleted with your password, through the HTTP API; a locked " +
+      "file aborts deletion without destroying the account so it can be retried.",
     status: "available",
-    surface: "cli",
+    surface: "api",
   },
   {
     id: "profile",
@@ -84,12 +87,13 @@ export const CAPABILITIES: readonly Capability[] = [
   },
   {
     id: "web-shell",
-    title: "Public website foundation",
+    title: "Website and account screens",
     detail:
-      "This page: responsive, keyboard accessible, no tracking scripts, and " +
-      "honest about what is not built yet. Registration and onboarding screens " +
-      "arrive with the HTTP API.",
-    status: "in-progress",
+      "This page plus register, sign in and consent screens. Keyboard accessible, " +
+      "no tracking scripts, and the consent text is fetched from the server " +
+      "instead of copied into the page. Onboarding, profile and upload screens " +
+      "are still to come.",
+    status: "available",
     surface: "web",
   },
   {

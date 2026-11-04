@@ -107,6 +107,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type"],
+        # A browser only exposes simple response headers to JavaScript. The site
+        # reads Retry-After to tell a student how long a 429 wait is, so it must
+        # be listed explicitly; exposing it leaks nothing else.
+        expose_headers=["Retry-After"],
         max_age=600,
     )
 
