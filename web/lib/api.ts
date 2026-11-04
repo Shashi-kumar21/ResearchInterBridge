@@ -62,12 +62,6 @@ export interface ConsentList {
   readonly consents: readonly ConsentState[];
 }
 
-export interface MeResponse {
-  readonly account: AccountSummary;
-  readonly expires_at: string;
-  readonly consents: readonly ConsentState[];
-}
-
 export interface ConsentAccepted {
   readonly policy_version: string;
   readonly kind: string;
@@ -215,10 +209,6 @@ export function loginAccount(input: LoginInput): Promise<SessionResponse> {
 
 export function signOut(): Promise<void> {
   return request<void>("/api/auth/logout", { method: "POST" });
-}
-
-export function fetchMyAccount(): Promise<MeResponse> {
-  return request<MeResponse>("/api/auth/me");
 }
 
 export function fetchConsents(): Promise<ConsentList> {

@@ -38,6 +38,16 @@ export function ConsentManager() {
   const [signingOut, setSigningOut] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
 
+  /** A 401 means the session is gone, not that the request was malformed. */
+  function reportFailure(failure: unknown) {
+    if (failure instanceof ApiError && failure.status === 401) {
+      setData(null);
+      setState("signed-out");
+      return;
+    }
+    setError(describeApiError(failure));
+  }
+
   useEffect(() => {
     let cancelled = false;
     fetchConsents()
@@ -70,14 +80,34 @@ export function ConsentManager() {
     setNotice(null);
     try {
       const accepted = await grantConsent(kind);
+      // The server recorded it; show that immediately so a failed refresh
+      // cannot make a successful grant look like it never happened.
+      setData((current) =>
+        current === null
+          ? current
+          : {
+              ...current,
+              consents: current.consents.map((item) =>
+                item.kind === kind ? { ...item, granted: true } : item,
+              ),
+            },
+      );
       setNotice(
         accepted.already_granted
           ? "That consent was already recorded for the current policy."
           : "Consent recorded. The server logged it against the current policy version.",
       );
-      setData(await fetchConsents());
+      try {
+        setData(await fetchConsents());
+      } catch (failure) {
+        // A grant is a ledger row, not a browser checkbox; an expired session
+        // still means the row is there. Only a 401 changes the page state.
+        if (failure instanceof ApiError && failure.status === 401) {
+          reportFailure(failure);
+        }
+      }
     } catch (failure) {
-      setError(describeApiError(failure));
+      reportFailure(failure);
     } finally {
       setBusyKind(null);
     }
@@ -91,7 +121,7 @@ export function ConsentManager() {
       setData(null);
       setState("signed-out");
     } catch (failure) {
-      setError(describeApiError(failure));
+      reportFailure(failure);
     } finally {
       setSigningOut(false);
     }

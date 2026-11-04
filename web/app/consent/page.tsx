@@ -23,9 +23,9 @@ export default function ConsentPage() {
         </p>
         <ConsentManager />
         <p className="fine-print">
-          Gmail access stays unused until the OAuth connection exists in a later phase. After that,
-          revoking it and deleting the account will be available from the site; today deletion is an
-          HTTP API call.
+          Gmail access is recorded now but stays unused until the OAuth connection exists in a later
+          phase. This site cannot connect to, revoke or send from Gmail yet. Deleting the account is
+          an HTTP API call today; buttons for it are not built.
         </p>
       </main>
     </>

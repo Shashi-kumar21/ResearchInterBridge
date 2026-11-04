@@ -85,6 +85,40 @@ describe("ConsentManager", () => {
     expect(JSON.parse(String(init.body))).toEqual({ kind: "gmail_access" });
   });
 
+  it("keeps a recorded grant visible when the follow-up refresh fails", async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(CONSENTS))
+      .mockResolvedValueOnce(
+        json({ policy_version: "2026-10-31", kind: "gmail_access", already_granted: false }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 503 }));
+    const user = userEvent.setup();
+    render(<ConsentManager />);
+
+    await screen.findByRole("heading", { name: "Gmail access" });
+    await user.click(screen.getByRole("button", { name: "Grant this consent" }));
+
+    // The grant is a server row; a failed list refresh must not make it look lost.
+    expect(await screen.findByText(/Consent recorded/)).toBeVisible();
+    expect(screen.getAllByText("Granted")).toHaveLength(3);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("returns to the signed-out state when the session expires while granting", async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(CONSENTS))
+      .mockResolvedValueOnce(
+        json({ error: { code: "invalid_session", message: "authentication required." } }, 401),
+      );
+    const user = userEvent.setup();
+    render(<ConsentManager />);
+
+    await screen.findByRole("heading", { name: "Gmail access" });
+    await user.click(screen.getByRole("button", { name: "Grant this consent" }));
+
+    expect(await screen.findByRole("heading", { name: "You are not signed in" })).toBeVisible();
+  });
+
   it("signs out and returns to the signed-out state", async () => {
     fetchMock
       .mockResolvedValueOnce(json(CONSENTS))

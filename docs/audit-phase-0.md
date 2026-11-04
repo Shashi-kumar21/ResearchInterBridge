@@ -329,7 +329,7 @@ makes the existing `register`/`login` safe to expose.
   contents), the account surface is `api` (new label "the HTTP API"), and the
   website card is now `available` on `web` because the screens exist. The web
   canary test was flipped deliberately and still proves the predicate is not dead.
-* Frontend tests: 54 total. New: API client (URL, JSON body, credentials, error
+* Frontend tests: 56 total. New: API client (URL, JSON body, credentials, error
   envelope, `Retry-After`, 204, non-JSON, network failure), error copy, roadmap
   honesty, and jsdom/Testing Library tests for all three forms.
 * Dev-only dependencies: `@testing-library/react`, `user-event`, `jest-dom`,
