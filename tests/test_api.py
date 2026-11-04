@@ -755,6 +755,7 @@ def test_a_failed_document_purge_keeps_the_account_and_can_be_retried(
 
     assert refused.status_code == 409
     assert error_code(refused) == "deletion_incomplete"
+    assert "account is intact" in refused.text
     assert str(settings.data_directory) not in refused.text
     # Nothing was half-deleted: the account and its document still exist.
     assert client.get("/api/auth/me").status_code == 200

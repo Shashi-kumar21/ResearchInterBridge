@@ -583,6 +583,9 @@ def test_purge_keeps_every_row_when_a_file_cannot_be_removed(
     remaining = {record.id for record in documents.list_documents(connection, user_id)}
     assert remaining == {first.id, second.id}
     assert locked_path.exists()
+    # The file ordered before the locked one is already gone: the message must
+    # not claim "nothing was deleted", only that no rows were.
+    assert not (data_dir / "documents" / second.storage_path).exists()
     failure = connection.execute(
         "SELECT outcome FROM audit_events WHERE action = 'document.purge_failed'"
     ).fetchall()

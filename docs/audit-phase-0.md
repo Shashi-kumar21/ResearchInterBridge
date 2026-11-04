@@ -277,12 +277,14 @@ makes the existing `register`/`login` safe to expose.
 
 * Migration 5 adds `rate_limit_counters(bucket, subject, window_start,
   expires_at, count)`. `ratelimit.py` implements a fixed window with
-  `INSERT … ON CONFLICT … RETURNING`, so the increment is one atomic statement
-  and a restart does not reset a budget. Refused requests keep counting.
+  `INSERT … ON CONFLICT DO UPDATE` plus a read-back inside one
+  `BEGIN IMMEDIATE` transaction, so concurrent requests cannot read the same
+  count and a restart does not reset a budget. Refused requests keep counting.
 * `register` allows 30/hour and `login` 120/15 min per transport peer address.
   The check runs before `auth.register`/`auth.authenticate`, therefore before any
-  scrypt call. The subject is a SHA-256 of the address; `X-Forwarded-For` is
-  ignored on purpose (caller-controlled), and proxies must throttle separately.
+  scrypt call. The subject is a SHA-256 of the address and the key is the ASGI
+  peer (`request.client`); with uvicorn `--proxy-headers` it comes from
+  `X-Forwarded-For`, so `--forwarded-allow-ips` must name only the proxy.
 * Errors gained headers: `RateLimitError` → `429 rate_limited` with
   `Retry-After`, `account_locked` → `429` with `Retry-After`, and a failed file
   purge → `409 deletion_incomplete`. `error_response` accepts headers, and the

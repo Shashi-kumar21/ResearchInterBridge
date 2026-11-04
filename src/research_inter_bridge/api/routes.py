@@ -123,6 +123,11 @@ def register(
     incomplete registration rather than creating a half-consented account.
     The rate check runs first: an automated flood must not cost one scrypt hash
     per request.
+
+    A duplicate email answers ``409 email_taken``, so registration does reveal
+    whether an address already has an account. That is unavoidable for an
+    endpoint whose job is to reject duplicates; login is the route that tries to
+    stay non-enumerable.
     """
 
     ratelimit.check(connection, rule=ratelimit.REGISTER_RULE, client=client)

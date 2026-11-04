@@ -41,10 +41,12 @@ Connection = Annotated[sqlite3.Connection, Depends(get_connection)]
 def client_address(request: Request) -> str:
     """Return the transport peer address used as the rate-limit subject.
 
-    ``X-Forwarded-For`` is deliberately ignored: the header is caller-controlled,
-    so honouring it would let one client pretend to be many and reset its budget.
-    An operator behind a reverse proxy must rate-limit there as well, or run the
-    API on a private interface only the proxy can reach.
+    The raw ``X-Forwarded-For`` header is never read here: it is caller-controlled,
+    so honouring it directly would let one client pretend to be many and reset its
+    budget. The value comes from the ASGI server, which is the safe path: uvicorn
+    rewrites ``request.client`` from that header only when ``--proxy-headers`` is
+    on and the peer is listed in ``--forwarded-allow-ips``. That list must name
+    the proxy addresses only, never ``*``.
     """
 
     peer = request.client

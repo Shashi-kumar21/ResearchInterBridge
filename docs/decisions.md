@@ -177,14 +177,17 @@ route), an OpenAPI schema for the frontend, and typed dependencies for
   (`ratelimit.py`): 30 registrations/hour, 120 logins/15 minutes, fixed window,
   counters in SQLite. The check runs before scrypt, so a flood costs a row
   update instead of a 16 MiB hash. The subject is a SHA-256 of the address;
-  `X-Forwarded-For` is ignored because it is caller-controlled. This is a
-  single-host bound, not a global one: a botnet with many addresses still gets
+  the key is the ASGI peer (`request.client`), so with uvicorn `--proxy-headers`
+  it comes from `X-Forwarded-For` and `--forwarded-allow-ips` must name only the
+  trusted proxy, never `*`. This is a single-host bound, not a global one: a botnet with many addresses still gets
   one budget each, which is why the per-account lockout and the account-level
   email/consent rules remain. A shared campus NAT also shares one budget, so the
   two constants in `ratelimit.py` are deployment tuning knobs, not sacred
   numbers.
-* scrypt calls share a `BoundedSemaphore(4)`: request threads queue instead of
-  each allocating ~16 MiB, so concurrency degrades latency rather than memory.
+* scrypt calls share a `BoundedSemaphore(4)` **per process**: request threads
+  queue instead of each allocating ~16 MiB, so concurrency degrades latency
+  rather than memory. `serve` starts one process, so the shipped bound is four;
+  a multi-worker deployment would allow four hashes per worker.
   FastAPI runs these synchronous service calls in its worker thread pool, so the
   wait never blocks the event loop.
 * Rate-limit knowledge that would otherwise leak: a locked account answers

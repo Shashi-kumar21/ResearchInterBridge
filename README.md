@@ -140,9 +140,11 @@ minutes. A refused request answers `429` with `rate_limited` and a `Retry-After`
 header (seconds). The account lockout uses the same status and header but the
 `account_locked` code. Counters live in SQLite (`rate_limit_counters`), so a
 restart does not reset them, and the stored subject is a SHA-256 of the address,
-never the address itself. `X-Forwarded-For` is deliberately ignored because a
-client can forge it; when running behind a reverse proxy, throttle there as well
-(or expose the API only to the proxy).
+never the address itself. The key is the transport peer (`request.client`),
+not the raw `X-Forwarded-For` header. Behind a reverse proxy that is only safe
+when the server trusts *only* that proxy: with uvicorn, `--proxy-headers` makes
+`request.client` come from `X-Forwarded-For`, so `--forwarded-allow-ips` must
+list the proxy addresses and never `*`.
 
 Sessions live in an `HttpOnly`, `SameSite=Lax`, host-only cookie
 (`RIB_SESSION_COOKIE_NAME`, default `rib_session`); only a SHA-256 of the token is

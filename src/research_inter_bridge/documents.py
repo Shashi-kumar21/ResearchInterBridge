@@ -517,6 +517,8 @@ def purge_user_documents(
 
     Returns the number of documents removed and raises
     :class:`DocumentPurgeError` (naming ids only) when a file cannot be removed.
+    No rows are deleted in that case, so the account stays intact and the call
+    can be retried; files removed before the failure stay removed.
     """
 
     rows = connection.execute(
@@ -544,10 +546,12 @@ def purge_user_documents(
                 target_id=str(user_id),
                 metadata={"documents": sorted(failed)},
             )
+        removed = len(rows) - len(failed)
         raise DocumentPurgeError(
             "stored files for document(s) "
             f"{', '.join(str(document_id) for document_id in sorted(failed))} could not be "
-            "removed; nothing was deleted, so the request can be retried."
+            f"removed ({removed} of {len(rows)} file(s) were removed); no rows were deleted "
+            "and the account is intact, so the request can be retried."
         )
 
     with db.transaction(connection):
