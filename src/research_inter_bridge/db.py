@@ -183,6 +183,27 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=5,
+        name="rate_limit_counters",
+        statements=(
+            # Fixed-window counters for unauthenticated endpoints. `subject` is a
+            # SHA-256 of the peer address, never the address itself: this table is
+            # not student data, but a database leak should not become a list of
+            # who tried to sign in.
+            """
+            CREATE TABLE IF NOT EXISTS rate_limit_counters (
+                bucket TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                window_start INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                count INTEGER NOT NULL,
+                PRIMARY KEY (bucket, subject, window_start)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_rate_limit_expiry ON rate_limit_counters (expires_at)",
+        ),
+    ),
 )
 
 

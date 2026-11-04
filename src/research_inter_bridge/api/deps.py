@@ -38,6 +38,24 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 Connection = Annotated[sqlite3.Connection, Depends(get_connection)]
 
 
+def client_address(request: Request) -> str:
+    """Return the transport peer address used as the rate-limit subject.
+
+    The raw ``X-Forwarded-For`` header is never read here: it is caller-controlled,
+    so honouring it directly would let one client pretend to be many and reset its
+    budget. The value comes from the ASGI server, which is the safe path: uvicorn
+    rewrites ``request.client`` from that header only when ``--proxy-headers`` is
+    on and the peer is listed in ``--forwarded-allow-ips``. That list must name
+    the proxy addresses only, never ``*``.
+    """
+
+    peer = request.client
+    return peer.host if peer is not None else "unknown"
+
+
+ClientAddress = Annotated[str, Depends(client_address)]
+
+
 def session_token(request: Request) -> str:
     """Read the session cookie, failing with the same error as an expired one."""
 

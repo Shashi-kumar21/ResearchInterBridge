@@ -197,8 +197,9 @@ optimization) have no predecessor.
 | 2c-1 | Fact confirmation, conflict flags, corrections, apply-to-profile | merged (PR #8) |
 | 2c-2 | Accounts, scrypt password hashing, lockout, versioned consent, sessions, export/delete | merged (PR #9) |
 | 2d-1 | Next.js + TypeScript shell: landing page, honest capability model, frontend CI job | merged (PR #10, ADR-010) |
-| 2d-2 | FastAPI auth/consent/account endpoints, cookie sessions, CORS + origin guard, API tests | this PR (ADR-012) |
-| 2d-3 | Register/login/consent screens wired to the API | next |
+| 2d-2 | FastAPI auth/consent/account endpoints, cookie sessions, CORS + origin guard, API tests | merged (PR #11, ADR-012) |
+| 2d-3a | API hardening: per-address rate limits, bounded scrypt, purge ordering, scheme-aware origin guard | this PR |
+| 2d-3b | Register/login/consent screens wired to the API | next |
 | 2d-4 | Onboarding, profile and document upload screens | planned |
 
 Phase 2c-2 notes for reviewers:
@@ -262,8 +263,46 @@ Phase 2c-2 notes for reviewers:
   export/delete behaviours over HTTP. Deletion re-checks the password, removes
   profile rows, facts, consents, documents (files included) and every session.
 * Known gap, recorded in ADR-012: no per-IP throttling on `register`/`login`
-  yet; the per-account lockout is the only credential-stuffing bound.
+  yet; the per-account lockout is the only credential-stuffing bound. Addressed
+  in §15 (Phase 2d-3a).
 * Frontend screens are deliberately not in this slice (ADR-010 "backend-only
   slice" note). The landing page copy was corrected in the same PR because it
   promised "CLI commands for export/delete with the HTTP API"; the endpoints now
   exist, so the sentence names the API and the planned account screens.
+
+## 15. Phase 2d-3a notes (API hardening)
+
+Addresses the review of PR #11. No new endpoint and no new setting; the slice
+makes the existing `register`/`login` safe to expose.
+
+* Migration 5 adds `rate_limit_counters(bucket, subject, window_start,
+  expires_at, count)`. `ratelimit.py` implements a fixed window with
+  `INSERT … ON CONFLICT DO UPDATE` plus a read-back inside one
+  `BEGIN IMMEDIATE` transaction, so concurrent requests cannot read the same
+  count and a restart does not reset a budget. Refused requests keep counting.
+* `register` allows 30/hour and `login` 120/15 min per transport peer address.
+  The check runs before `auth.register`/`auth.authenticate`, therefore before any
+  scrypt call. The subject is a SHA-256 of the address and the key is the ASGI
+  peer (`request.client`); with uvicorn `--proxy-headers` it comes from
+  `X-Forwarded-For`, so `--forwarded-allow-ips` must name only the proxy.
+* Errors gained headers: `RateLimitError` → `429 rate_limited` with
+  `Retry-After`, `account_locked` → `429` with `Retry-After`, and a failed file
+  purge → `409 deletion_incomplete`. `error_response` accepts headers, and the
+  generic HTTP-error handler forwards Starlette's own headers.
+* scrypt shares a per-process `BoundedSemaphore(4)`; the bound is on hashing work, so a
+  login flood queues threads instead of multiplying ~16 MiB allocations.
+* `documents.purge_user_documents` removes files **before** rows and raises
+  `DocumentPurgeError` naming ids when a file is locked, so account deletion
+  aborts with the account intact and is retryable. The failure is audited as
+  `document.purge_failed` without paths.
+* `same_origin` compares scheme as well as host:port, the guard is parametrized
+  over `POST /consents`, `POST /logout` and `DELETE /account`, and
+  `RIB_CORS_ORIGINS` entries are lowercased so a browser origin matches the
+  configured one regardless of how the operator typed it.
+* `register`/`login` responses are `Cache-Control: no-store`. The login docstring
+  now states the residual `account_locked` oracle instead of claiming the
+  endpoint cannot be used for enumeration at all.
+* Tests: window expiry, per-client budgets, stored digest, sweep behaviour,
+  short-window sweep not deleting a live long-window counter, route-level 429 +
+  `Retry-After`, limiter-before-credentials, no-store, host-only cookie,
+  scheme-aware origin guard, purge failure and retry, and the scrypt bound.

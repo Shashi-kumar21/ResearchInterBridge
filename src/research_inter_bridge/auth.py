@@ -25,6 +25,7 @@ import math
 import re
 import secrets
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -67,6 +68,25 @@ SCRYPT_R = 8
 SCRYPT_P = 1
 SCRYPT_DKLEN = 32
 MAX_SCRYPT_N = 2**20
+
+#: Each scrypt call with the parameters above needs ~16 MiB and a few tens of
+#: milliseconds of CPU. Without a ceiling, N concurrent unauthenticated logins
+#: multiply that memory by N: this bounds the hashing work, not the request
+#: count, so a flood degrades latency instead of exhausting RAM. Four is small
+#: enough for a single host and large enough to keep a login form responsive.
+SCRYPT_MAX_CONCURRENCY = 4
+_scrypt_slots = threading.BoundedSemaphore(SCRYPT_MAX_CONCURRENCY)
+
+
+def _scrypt(password: bytes, *, salt: bytes, n: int, r: int, p: int, dklen: int) -> bytes:
+    """Run one scrypt hash, waiting for a slot instead of oversubscribing CPU.
+
+    FastAPI runs these synchronous service calls in worker threads, so blocking
+    here parks one thread rather than the event loop.
+    """
+
+    with _scrypt_slots:
+        return hashlib.scrypt(password, salt=salt, n=n, r=r, p=p, dklen=dklen)
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +164,7 @@ def hash_password(password: str, *, salt: bytes | None = None) -> str:
             f"password must be at most {MAX_PASSWORD_LENGTH} characters.", code="invalid_input"
         )
     salt = secrets.token_bytes(16) if salt is None else salt
-    derived = hashlib.scrypt(
+    derived = _scrypt(
         password.encode("utf-8"),
         salt=salt,
         n=SCRYPT_N,
@@ -177,7 +197,7 @@ def verify_password(password: str, stored: str) -> bool:
         if not 2 <= n <= MAX_SCRYPT_N or not 1 <= r <= 32 or not 1 <= p <= 8:
             return False
         expected = bytes.fromhex(hash_hex)
-        candidate = hashlib.scrypt(
+        candidate = _scrypt(
             password.encode("utf-8"),
             salt=bytes.fromhex(salt_hex),
             n=n,
@@ -322,10 +342,12 @@ def authenticate(
         locked_until = _parse(row["locked_until"])
         if locked_until > now:
             remaining = max(1, math.ceil((locked_until - now).total_seconds() / 60))
+            wait_seconds = max(1, math.ceil((locked_until - now).total_seconds()))
             _audit_login_failure(connection, reason="locked")
             raise AuthError(
                 f"too many failed attempts; try again in {remaining} minute(s).",
                 code="account_locked",
+                retry_after=wait_seconds,
             )
         # The window elapsed without a successful login, so the old count is
         # spent: start a fresh budget. Carrying it over would re-lock the account

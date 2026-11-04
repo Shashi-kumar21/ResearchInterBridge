@@ -23,6 +23,7 @@ from research_inter_bridge.errors import (
     DocumentError,
     DocumentNotFoundError,
     DocumentParsingError,
+    DocumentPurgeError,
     DocumentTooLargeError,
     UnsupportedDocumentError,
 )
@@ -555,3 +556,47 @@ def test_upload_without_document_consent_is_refused(
 
     assert documents.list_documents(connection, user_id) == ()
     assert not (data_dir / "documents").exists()
+
+
+def test_purge_keeps_every_row_when_a_file_cannot_be_removed(
+    connection: sqlite3.Connection, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_id = create_user(connection)
+    first = _upload(connection, data_dir, user_id, pdf_bytes("one"))
+    second = _upload(connection, data_dir, user_id, docx_bytes("two"), name="cv.docx")
+    locked_path = data_dir / "documents" / first.storage_path
+    original_unlink = Path.unlink
+
+    def locked_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == locked_path:
+            raise PermissionError("the file is open in another program")
+        original_unlink(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "unlink", locked_unlink)
+
+    with pytest.raises(DocumentPurgeError, match=rf"document\(s\) {first.id}\b"):
+        documents.purge_user_documents(
+            connection, user_id=user_id, data_directory=data_dir, actor="student:1"
+        )
+
+    # Files go first, so a locked file leaves both rows available for a retry.
+    remaining = {record.id for record in documents.list_documents(connection, user_id)}
+    assert remaining == {first.id, second.id}
+    assert locked_path.exists()
+    # The unlocked file is already gone: the message must not claim
+    # "nothing was deleted", only that no rows were.
+    assert not (data_dir / "documents" / second.storage_path).exists()
+    failure = connection.execute(
+        "SELECT outcome FROM audit_events WHERE action = 'document.purge_failed'"
+    ).fetchall()
+    assert [row["outcome"] for row in failure] == ["failure"]
+
+    monkeypatch.undo()
+    assert (
+        documents.purge_user_documents(
+            connection, user_id=user_id, data_directory=data_dir, actor="student:1"
+        )
+        == 2
+    )
+    assert documents.list_documents(connection, user_id) == ()
+    assert not locked_path.exists()

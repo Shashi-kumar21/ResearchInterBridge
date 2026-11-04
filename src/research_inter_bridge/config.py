@@ -82,6 +82,15 @@ class Settings:
                 f"{_setting_name('session_cookie_name')} must be a cookie token "
                 f"(letters, digits and !#$%&'*+-.^_`|~); got {self.session_cookie_name!r}."
             )
+        # Scheme and host are case-insensitive (RFC 3986 §3.2.2, RFC 7230 §2.7),
+        # but a browser sends the origin in lowercase. Normalising here means the
+        # guard compares like with like instead of rejecting a valid request just
+        # because the operator typed `HTTPS://App.Example.EDU`.
+        object.__setattr__(
+            self,
+            "cors_origins",
+            tuple(dict.fromkeys(origin.lower() for origin in self.cors_origins)),
+        )
 
     @property
     def resolved_database_path(self) -> Path:

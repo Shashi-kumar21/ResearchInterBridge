@@ -15,7 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from research_inter_bridge import auth, db
+from research_inter_bridge import auth, db, ratelimit
+from research_inter_bridge import documents as document_service
 from research_inter_bridge.api import create_app
 from research_inter_bridge.config import Settings
 
@@ -601,3 +602,169 @@ def test_authenticated_responses_are_not_cacheable(client: TestClient) -> None:
 
     assert client.get("/api/auth/me").headers["cache-control"] == "no-store"
     assert client.get("/api/consents").headers["cache-control"] == "no-store"
+
+
+# --------------------------------------------------------------------------- #
+# rate limiting and hardening
+# --------------------------------------------------------------------------- #
+
+
+def test_register_is_rate_limited_with_a_retry_after(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        ratelimit,
+        "REGISTER_RULE",
+        ratelimit.RateLimitRule(name="auth.register", limit=2, window_seconds=3600),
+    )
+
+    first = register(client)
+    second = register(client, email=OTHER_EMAIL)
+    refused = register(client, email="third@example.edu")
+
+    assert [first.status_code, second.status_code, refused.status_code] == [201, 201, 429]
+    assert error_code(refused) == "rate_limited"
+    retry_after = refused.headers["retry-after"]
+    assert retry_after.isdigit()
+    assert 1 <= int(retry_after) <= 3600
+    assert "third@example.edu" not in refused.text
+
+
+def test_the_login_rate_limit_runs_before_credentials_are_checked(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        ratelimit,
+        "LOGIN_RULE",
+        ratelimit.RateLimitRule(name="auth.login", limit=2, window_seconds=900),
+    )
+
+    attempts = [
+        client.post(
+            "/api/auth/login",
+            json={"email": f"nobody{index}@example.edu", "password": PASSWORD},
+        )
+        for index in range(3)
+    ]
+
+    assert [response.status_code for response in attempts] == [401, 401, 429]
+    assert error_code(attempts[-1]) == "rate_limited"
+    assert attempts[-1].headers["retry-after"].isdigit()
+    # Neither account state nor a session leaked through the refused request.
+    assert "Set-Cookie" not in attempts[-1].headers
+
+
+def test_register_and_login_responses_are_not_cacheable(client: TestClient) -> None:
+    registered = register(client)
+    client.cookies.clear()
+    logged_in = client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
+
+    assert registered.status_code == 201
+    assert logged_in.status_code == 200
+    assert registered.headers["cache-control"] == "no-store"
+    assert logged_in.headers["cache-control"] == "no-store"
+
+
+def test_the_session_cookie_is_host_only(client: TestClient) -> None:
+    cookie = register(client).headers["set-cookie"]
+
+    # No `Domain=` attribute: a sibling subdomain must not receive the cookie.
+    assert "domain" not in cookie.lower()
+
+
+def test_the_account_lockout_response_carries_retry_after(client: TestClient) -> None:
+    assert register(client).status_code == 201
+    client.cookies.clear()
+    for index in range(auth.MAX_FAILED_ATTEMPTS):
+        assert (
+            client.post(
+                "/api/auth/login", json={"email": EMAIL, "password": f"wrong-{index}"}
+            ).status_code
+            == 401
+        )
+
+    locked = client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
+
+    assert locked.status_code == 429
+    assert error_code(locked) == "account_locked"
+    retry_after = locked.headers["retry-after"]
+    assert retry_after.isdigit()
+    lockout_seconds = int(auth.LOCKOUT.total_seconds())
+    assert 1 <= int(retry_after) <= lockout_seconds
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/api/consents", {"kind": "gmail_access"}),
+        ("POST", "/api/auth/logout", None),
+        ("DELETE", "/api/auth/account", {"password": PASSWORD}),
+    ],
+)
+def test_the_origin_guard_covers_every_state_changing_route(
+    client: TestClient, method: str, path: str, body: dict[str, str] | None
+) -> None:
+    response = client.request(
+        method,
+        path,
+        json=body,
+        headers={"Origin": "https://evil.example"},
+    )
+
+    assert response.status_code == 403
+    assert error_code(response) == "origin_not_allowed"
+
+
+def test_the_same_origin_with_a_different_scheme_is_refused(client: TestClient) -> None:
+    response = client.post(
+        "/api/auth/logout",
+        headers={"Origin": "https://testserver"},
+    )
+
+    assert response.status_code == 403
+    assert error_code(response) == "origin_not_allowed"
+
+
+def test_a_failed_document_purge_keeps_the_account_and_can_be_retried(
+    client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registered = register(client)
+    user_id = registered.json()["account"]["user_id"]
+    with db.session(settings.database_path) as connection:
+        stored = document_service.save_document(
+            connection,
+            user_id=user_id,
+            display_name="cv.txt",
+            payload=b"a plain text curriculum vitae",
+            data_directory=settings.data_directory,
+            actor=f"user:{user_id}",
+        )
+    document_path = settings.data_directory / "documents" / stored.storage_path
+    assert document_path.is_file()
+
+    original_unlink = Path.unlink
+
+    def locked_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == document_path:
+            raise PermissionError("the file is open in another program")
+        original_unlink(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "unlink", locked_unlink)
+
+    refused = client.request("DELETE", "/api/auth/account", json={"password": PASSWORD})
+
+    assert refused.status_code == 409
+    assert error_code(refused) == "deletion_incomplete"
+    assert "account is intact" in refused.text
+    assert str(settings.data_directory) not in refused.text
+    # Nothing was half-deleted: the account and its document still exist.
+    assert client.get("/api/auth/me").status_code == 200
+    with db.session(settings.database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM student_documents").fetchone()[0] == 1
+
+    monkeypatch.undo()
+    retried = client.request("DELETE", "/api/auth/account", json={"password": PASSWORD})
+
+    assert retried.status_code == 204
+    assert not document_path.exists()
+    assert client.get("/api/auth/me").status_code == 401

@@ -19,7 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import db
 from ..config import Settings, load_settings
-from ..errors import AuthError, ConsentError
+from ..errors import AuthError, ConsentError, DocumentPurgeError, RateLimitError
 from ..logging import get_logger
 from .middleware import OriginGuardMiddleware
 from .routes import AUTH_STATUS_CODES, CONSENT_STATUS_CODES, router
@@ -37,12 +37,23 @@ HTTP_CODES = {
 }
 
 
-def error_response(status_code: int, code: str, message: str) -> JSONResponse:
-    """Every failure uses one envelope: ``{"error": {"code", "message"}}``."""
+def error_response(
+    status_code: int,
+    code: str,
+    message: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    """Every failure uses one envelope: ``{"error": {"code", "message"}}``.
+
+    ``headers`` carries protocol hints a client needs to act on the failure, such
+    as ``Retry-After``; it never carries anything derived from request content.
+    """
 
     return JSONResponse(
         {"error": {"code": code, "message": message}},
         status_code=status_code,
+        headers=headers,
     )
 
 
@@ -116,7 +127,27 @@ def _install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthError)
     async def _auth_error(request: Request, exc: AuthError) -> JSONResponse:
         status_code = AUTH_STATUS_CODES.get(exc.code, status.HTTP_400_BAD_REQUEST)
-        return error_response(status_code, exc.code, str(exc))
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after is not None else None
+        return error_response(status_code, exc.code, str(exc), headers=headers)
+
+    @app.exception_handler(RateLimitError)
+    async def _rate_limited(request: Request, exc: RateLimitError) -> JSONResponse:
+        return error_response(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            exc.code,
+            str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        )
+
+    @app.exception_handler(DocumentPurgeError)
+    async def _purge_failed(request: Request, exc: DocumentPurgeError) -> JSONResponse:
+        # Rows are still present, so the account is intact and the student can
+        # retry once the operating system releases the file.
+        return error_response(
+            status.HTTP_409_CONFLICT,
+            "deletion_incomplete",
+            str(exc),
+        )
 
     @app.exception_handler(ConsentError)
     async def _consent_error(request: Request, exc: ConsentError) -> JSONResponse:
@@ -127,7 +158,7 @@ def _install_error_handlers(app: FastAPI) -> None:
     async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         code = HTTP_CODES.get(exc.status_code, "http_error")
         message = exc.detail if isinstance(exc.detail, str) else "request failed."
-        return error_response(exc.status_code, code, message)
+        return error_response(exc.status_code, code, message, headers=exc.headers)
 
     @app.exception_handler(sqlite3.Error)
     async def _database_error(request: Request, exc: sqlite3.Error) -> JSONResponse:
