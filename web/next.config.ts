@@ -22,9 +22,12 @@ const nextConfig: NextConfig = {
             // Directive subset that needs no nonce. `script-src` is deliberately
             // absent: Next emits inline bootstrap scripts, so it needs a nonce
             // minted per request when the dynamic pages land (Phase 2d-2), not a
-            // blanket 'unsafe-inline' pasted here today.
+            // blanket 'unsafe-inline' pasted here today. `form-action 'none'`
+            // blocks every native form submission; the account forms submit with
+            // fetch, so a pre-hydration click can never put a password in a URL.
             key: "Content-Security-Policy",
-            value: "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'",
+            value:
+              "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'none'",
           },
         ],
       },

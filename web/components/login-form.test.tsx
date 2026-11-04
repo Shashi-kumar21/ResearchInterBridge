@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LoginForm } from "./login-form";
@@ -40,6 +41,17 @@ async function submitCredentials(): Promise<void> {
 }
 
 describe("LoginForm", () => {
+  it("cannot submit natively before hydration", () => {
+    // Server-rendered HTML has no React handler. The submit button must already
+    // be disabled, and the form must never be a GET: otherwise a click (or
+    // JavaScript disabled) puts the password in the URL.
+    const html = renderToString(<LoginForm />);
+
+    expect(html).toContain('method="post"');
+    expect(html).not.toMatch(/method="get"/i);
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Sign in<\/button>/);
+  });
+
   it("reports the signed-in account", async () => {
     fetchMock.mockResolvedValue(json(SESSION));
     await submitCredentials();

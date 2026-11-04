@@ -107,7 +107,7 @@ export function RegisterForm() {
   }
 
   return (
-    <form className="panel" onSubmit={onSubmit}>
+    <form className="panel" method="post" onSubmit={onSubmit}>
       {error ? (
         <p className="alert" role="alert">
           {error}
