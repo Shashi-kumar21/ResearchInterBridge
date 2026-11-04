@@ -768,3 +768,17 @@ def test_a_failed_document_purge_keeps_the_account_and_can_be_retried(
     assert retried.status_code == 204
     assert not document_path.exists()
     assert client.get("/api/auth/me").status_code == 401
+
+
+def test_cors_exposes_retry_after_to_the_website(client: TestClient) -> None:
+    # Without this header the browser hides Retry-After from fetch(), and the
+    # sign-in form cannot tell the student how long a lockout lasts.
+    response = client.post(
+        "/api/auth/login",
+        json={"email": "nobody@example.edu", "password": "wrong password"},
+        headers={"Origin": ORIGIN},
+    )
+
+    assert response.status_code == 401
+    assert response.headers["access-control-expose-headers"] == "Retry-After"
+    assert response.headers["access-control-allow-origin"] == ORIGIN

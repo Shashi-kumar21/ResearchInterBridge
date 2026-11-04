@@ -195,3 +195,55 @@ route), an OpenAPI schema for the frontend, and typed dependencies for
   that exists. That residual oracle is accepted (the alternative, locking by
   address, punishes shared campus NAT); `429 rate_limited` is uniform and is
   emitted before the account row is read.
+
+## ADR-013 — Browser account screens and the API client
+
+**Status:** accepted 2026-11-04 · **Decided by:** Dev (within ADR-010, ADR-012) · **Spec:** `task.md` §3.1, §5, §9
+
+The API exists (ADR-012) and the site was server-components-only. Students still
+had no way to create an account from the hosted site, and a public site that
+describes accounts but cannot create one is the over-claim the project keeps
+trying to avoid.
+
+**Decision:** ship register, sign-in and consent as the only client components;
+keep every other page a server component. `web/lib/api.ts` is the single browser
+client, authenticated by the existing HttpOnly cookie with
+`credentials: "include"`. The registration form fetches the consent catalogue
+from the server instead of holding a copy of the texts. `NEXT_PUBLIC_API_BASE_URL`
+selects the API origin at build time (default `http://localhost:8000`).
+
+**Why this shape:**
+
+* Consent is a ledger row against a policy version. A second copy of the text in
+  the site could drift, so the page renders what the server will record. If the
+  catalogue fails to load, submission stays disabled: nobody can agree to text
+  that was not shown.
+* The cookie stays the authentication mechanism. No token is stored in
+  `localStorage` or exposed to JavaScript, so an XSS on the site cannot read a
+  session token; it would still need the browser to make the request.
+* Errors are branched on the stable `code` and the HTTP status, never on message
+  text. `ApiError` carries `Retry-After` seconds, which the API now exposes via
+  CORS (`Access-Control-Expose-Headers: Retry-After`) — without that, a browser
+  hides the header and the lockout message could not quote the wait.
+* `/consent` reads the server state and signs out through the API. It does offer
+  the `gmail_access` consent before OAuth exists because recording consent is
+  harmless and the text says the connection arrives later; the scope is not
+  requested and no email is sent.
+
+**Consequences:**
+
+* JavaScript is required for the three forms. With it disabled the forms cannot
+  submit at all; nothing posts to a surprising fallback URL.
+* The site and API must be same-site for the `SameSite=Lax` cookie in
+  development: use `http://localhost:3000` and `http://localhost:8000`, not a mix
+  with `127.0.0.1`. Production needs HTTPS and `RIB_COOKIE_SECURE=true`.
+* The site's origin must be listed exactly in `RIB_CORS_ORIGINS`, and the
+  browser must be able to reach the API URL directly. A same-origin reverse proxy
+  (`/api` → backend) remains the simpler production deployment and needs no CORS
+  at all.
+* `NEXT_PUBLIC_*` is inlined at build time, so changing the API origin is a
+  rebuild, not a runtime setting.
+* Test dependencies grow: `@testing-library/react`, `user-event`, `jest-dom` and
+  `jsdom` (dev-only). They are justified because the forms now carry behaviour
+  (consent gating, error mapping, session handling) that the Python suite cannot
+  see, and hand-testing it once is not a regression test.

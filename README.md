@@ -187,24 +187,35 @@ tests never call live APIs and never send email.
 
 ## Frontend (`web/`)
 
-Next.js + TypeScript (ADR-010), currently one static, accessible landing page.
+Next.js + TypeScript (ADR-010/ADR-013): the landing page plus register, sign in
+and consent screens that talk to the JSON API.
 
 ```powershell
+# terminal 1: API with the site's origin allowed and a session cookie
+$env:RIB_CORS_ORIGINS = "http://localhost:3000"
+py -3.11 -m research_inter_bridge serve
+
+# terminal 2: the site
 cd web
 npm ci
+$env:NEXT_PUBLIC_API_BASE_URL = "http://localhost:8000"   # also the default
 npm run dev      # http://localhost:3000
 ```
 
-The page still carries no sign-up form: the API exists, but the register and
-login screens land in the next slice, and a form that cannot submit is worse than
-no form. Product copy lives in `web/lib/roadmap.ts` and `web/lib/roadmap.test.ts` enforces
-its shape: a capability cannot be labelled `available` on the `web` surface,
-email sending cannot be `available`, every status gets a matching surface label,
-and every entry needs a real detail. There are no client components, no
-hand-written browser JavaScript, no external fonts, images or analytics; Next
-still ships its framework runtime (~171 KB gzipped for this page), and the build
-itself makes no network request. Tested on Node 24 (`web/.nvmrc`).
-`web/README.md` explains the constraints.
+`NEXT_PUBLIC_API_BASE_URL` is read at build time, so a production build needs it
+set before `npm run build`. Use `http://localhost:8000` (not `127.0.0.1`) while
+developing: the session cookie is `SameSite=Lax`, and a different host would make
+the API a different site.
+
+The consent texts on the registration form are fetched from
+`GET /api/consents/catalogue`, never copied into the page, so the text a student
+agrees to matches the policy version the server records. Product copy lives in
+`web/lib/roadmap.ts` and `web/lib/roadmap.test.ts` enforces its shape: a card's
+surface line must agree with its badge, email sending cannot be `available`, and
+only capabilities that really run in a browser may claim the `web` surface. There
+are no client components outside the account forms, no hand-written analytics, no
+external fonts or images, and the build itself makes no network request. Tested
+on Node 24 (`web/.nvmrc`); `web/README.md` explains the constraints.
 
 ## Layout
 
@@ -223,7 +234,8 @@ src/research_inter_bridge/    Python package
   api/                        FastAPI app: sessions, CORS, consent and account routes
   cli.py / __main__.py        migrate, health, serve, auth, consent, document and fact commands
 tests/                        pytest suite (offline, synthetic data only)
-web/                          Next.js + TypeScript site (landing page today)
+web/                          Next.js + TypeScript site (landing + account screens)
+web/lib/api.ts                typed browser client for the JSON API
 web/lib/roadmap.ts            capability/limit/workflow data the page renders
 docs/                         audit report, decisions, architecture notes
 ```

@@ -14,7 +14,7 @@ import {
 } from "./roadmap";
 
 const STATUSES: readonly CapabilityStatus[] = ["available", "in-progress", "planned"];
-const SURFACES: readonly CapabilitySurface[] = ["cli", "web"];
+const SURFACES: readonly CapabilitySurface[] = ["cli", "api", "web"];
 
 describe("capability model", () => {
   it("uses unique ids", () => {
@@ -44,11 +44,15 @@ describe("capability model", () => {
     expect(sending?.status).not.toBe("available");
   });
 
-  it("does not claim any capability runs in the browser yet", () => {
-    // Canary for Phase 2d-1: the only shipped surface is the Python CLI, so the
-    // site must not imply that a feature works on this website. Flip this test
-    // deliberately with the first real web feature.
-    expect(hasWebCapability()).toBe(false);
+  it("marks the shipped account screens as available on the web", () => {
+    // Flipped deliberately in Phase 2d-3b: register, sign-in and consent really
+    // run on this site now. The canary is the specific card, not "any card".
+    const shell = CAPABILITIES.find((capability) => capability.id === "web-shell");
+
+    expect(shell).toBeDefined();
+    expect(shell?.status).toBe("available");
+    expect(shell?.surface).toBe("web");
+    expect(hasWebCapability()).toBe(true);
   });
 
   it("detects a web capability that really is available", () => {
@@ -104,23 +108,32 @@ describe("capability model", () => {
       expect(STATUS_LABELS[status].length).toBeGreaterThan(2);
     }
     for (const capability of CAPABILITIES) {
-      expect(surfaceLabel(capability)).toMatch(/the (command line|website)$/);
+      expect(surfaceLabel(capability)).toMatch(/the (command line|HTTP API|website)$/);
     }
   });
 
-  it("keeps every available capability on the CLI surface", () => {
-    const available = CAPABILITIES.filter((capability) => capability.status === "available");
+  it("keeps each available capability on the surface it really runs on", () => {
+    const expected: Record<string, CapabilitySurface> = {
+      account: "api",
+      profile: "cli",
+      documents: "cli",
+      facts: "cli",
+      "web-shell": "web",
+    };
 
-    expect(available.length).toBeGreaterThan(0);
-    for (const capability of available) {
-      expect(capability.surface).toBe("cli");
+    for (const [id, surface] of Object.entries(expected)) {
+      const capability = CAPABILITIES.find((item) => item.id === id);
+
+      expect(capability?.status, id).toBe("available");
+      expect(capability?.surface, id).toBe(surface);
+      expect(surfaceLabel(capability as Capability)).toMatch(/^Available on: /);
     }
   });
 });
 
 describe("summaryCounts", () => {
   it("counts each status", () => {
-    expect(summaryCounts()).toEqual({ available: 4, inProgress: 1, planned: 6 });
+    expect(summaryCounts()).toEqual({ available: 5, inProgress: 0, planned: 6 });
   });
 
   it("counts the whole list", () => {
@@ -174,5 +187,22 @@ describe("honesty guards", () => {
     for (const step of WORKFLOW) {
       expect(step.detail.length).toBeGreaterThan(10);
     }
+  });
+});
+
+describe("copy honesty", () => {
+  it("does not claim that document contents can be exported", () => {
+    const account = CAPABILITIES.find((capability) => capability.id === "account");
+    const detail = account?.detail ?? "";
+
+    expect(detail).not.toMatch(/everything you uploaded/i);
+    expect(detail).toMatch(/account data/i);
+  });
+
+  it("names the HTTP API as the surface for export and deletion", () => {
+    const account = CAPABILITIES.find((capability) => capability.id === "account");
+
+    expect(account?.surface).toBe("api");
+    expect(surfaceLabel(account as Capability)).toBe("Available on: the HTTP API");
   });
 });
