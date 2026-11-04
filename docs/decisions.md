@@ -250,3 +250,65 @@ selects the API origin at build time (default `http://localhost:8000`).
   `jsdom` (dev-only). They are justified because the forms now carry behaviour
   (consent gating, error mapping, session handling) that the Python suite cannot
   see, and hand-testing it once is not a regression test.
+
+## ADR-014 — Content API for profile, documents and facts
+
+**Status:** accepted 2026-11-04 · **Decided by:** Dev (within ADR-012) · **Spec:** `task.md` §3.2, §3.3
+
+The JSON API could create an account but had no way to save the profile the
+onboarding screen collects, upload a CV, or confirm the facts extracted from it.
+The CLI and the website therefore could not reach the same feature set.
+
+**Decision:** add a content surface to the same router, again as a thin layer
+over the services:
+
+| Route | Service |
+| --- | --- |
+| `GET/PUT /api/profile` | `profiles.load_profile`, `profiles.save_profile`, `profiles.completeness` |
+| `GET/POST /api/documents`, `GET/DELETE /api/documents/{id}` | `documents.*` |
+| `POST /api/documents/{id}/parse` | `parsing.parse_document` |
+| `GET /api/facts`, `PATCH /api/facts/{id}`, `POST /api/facts/apply` | `facts.*` |
+
+**Why this shape:**
+
+* `PUT /api/profile` is a full replacement: the body is the profile the student
+  sees, omitted optional fields are cleared. `user_id`, `consent_given_at` and
+  the timestamps are rejected as unknown fields and filled server-side; the
+  consent timestamp comes from the consent ledger, so a payload cannot claim a
+  consent that was never recorded.
+* Uploads are `multipart/form-data`, which requires `python-multipart`. It is
+  the dependency Starlette itself uses for `UploadFile`; without it the route
+  fails before the service's own extension/content/size checks run. The route
+  drains the upload in 1 MiB chunks and stops at `documents.MAX_DOCUMENT_BYTES`,
+  so an oversized file is refused before the whole body is held in memory.
+  Starlette has already spooled the part to disk at that point; the cap bounds
+  what this process adds.
+* Every document read, delete and parse is owner-scoped in the service, so
+  another student's id answers `404 document_missing` rather than `403`. That
+  avoids confirming that an id exists.
+* Personal content is `Cache-Control: no-store`, like `/api/auth/me`. A shared
+  cache must not keep a CV or a profile.
+* Fact confirmation stays a `PATCH` on one candidate with `status` and an
+  optional `corrected_value`; `POST /api/facts/apply` copies only confirmed
+  facts and keeps values the student typed unless `overwrite` is explicit.
+  Re-parsing a document is idempotent, so a retried request cannot duplicate or
+  confirm a candidate.
+* Errors carry stable codes mapped next to the routes: `profile_missing` (404),
+  `fact_missing` (404), `invalid_profile` (400), `invalid_document` (400),
+  `document_missing` (404), `document_too_large` (413),
+  `unsupported_document` (415), `document_unreadable` (422) and the existing
+  `consent_required` (403) from the document service. Messages name the field,
+  extension or limit; they never include document text or a filesystem path.
+* CORS now allows `PUT` and `PATCH`, and the origin guard already covers every
+  unsafe method because it is method-based, not route-based.
+
+**Consequences:**
+
+* The schema and the service are the only validators; the route does not repeat
+  an individual rule. A profile rejected by the domain object is a `400`, not a
+  `422`, because the body was well-formed.
+* A student who has not saved a profile gets `404 profile_missing`; the
+  onboarding screen can tell "not started" from "saved with blanks". Applying
+  facts without a profile is a `404` for the same reason.
+* The Python set of runtime dependencies grows by one (`python-multipart`).
+  It is small, MIT-licensed and only used by the upload endpoint.

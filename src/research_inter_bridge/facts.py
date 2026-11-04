@@ -213,6 +213,16 @@ def fact_groups(connection: sqlite3.Connection, user_id: int) -> tuple[FactGroup
     return tuple(groups)
 
 
+def fact_status(connection: sqlite3.Connection, *, user_id: int, fact_id: int) -> str | None:
+    """Return one fact's status for its owner, or ``None`` when it is not theirs."""
+
+    row = connection.execute(
+        "SELECT status FROM profile_facts WHERE id = ? AND user_id = ?",
+        (fact_id, user_id),
+    ).fetchone()
+    return None if row is None else str(row["status"])
+
+
 def _clean_fact_value(value: str) -> str:
     cleaned = " ".join(str(value).split())
     if not cleaned:

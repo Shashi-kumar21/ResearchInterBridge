@@ -26,19 +26,33 @@ class ProfileError(ResearchInterBridgeError):
     """Raised when a student profile is invalid.
 
     The message must name the offending field and what a valid value looks like.
+    ``code`` is a stable identifier an HTTP layer maps to a status code without
+    matching on message text.
     """
+
+    code = "invalid_profile"
 
 
 class ProfileNotFoundError(ProfileError):
     """Raised when a profile is requested for a user id that has none."""
+
+    code = "profile_missing"
+
+
+class FactNotFoundError(ProfileError):
+    """Raised when a fact id does not exist for the requesting user."""
+
+    code = "fact_missing"
 
 
 class DocumentError(ResearchInterBridgeError):
     """Raised when an uploaded document is rejected or cannot be used.
 
     The message must name the reason (extension, content, size, ownership) and
-    never include document text.
+    never include document text. ``code`` is the stable HTTP-facing identifier.
     """
+
+    code = "invalid_document"
 
 
 class DocumentPurgeError(DocumentError):
@@ -48,21 +62,31 @@ class DocumentPurgeError(DocumentError):
     the file is released; the message names document ids, never paths or text.
     """
 
+    code = "deletion_incomplete"
+
 
 class UnsupportedDocumentError(DocumentError):
     """Raised when a file is not an accepted PDF/DOCX/TXT document."""
+
+    code = "unsupported_document"
 
 
 class DocumentTooLargeError(DocumentError):
     """Raised when a file exceeds the configured size limit."""
 
+    code = "document_too_large"
+
 
 class DocumentNotFoundError(DocumentError):
     """Raised when a document id does not exist for the requesting user."""
 
+    code = "document_missing"
+
 
 class DocumentParsingError(DocumentError):
     """Raised when an accepted document cannot be converted to text."""
+
+    code = "document_unreadable"
 
 
 class AuthError(ResearchInterBridgeError):

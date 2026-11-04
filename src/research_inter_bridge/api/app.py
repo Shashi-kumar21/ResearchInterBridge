@@ -19,10 +19,22 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import db
 from ..config import Settings, load_settings
-from ..errors import AuthError, ConsentError, DocumentPurgeError, RateLimitError
+from ..errors import (
+    AuthError,
+    ConsentError,
+    DocumentError,
+    ProfileError,
+    RateLimitError,
+)
 from ..logging import get_logger
 from .middleware import OriginGuardMiddleware
-from .routes import AUTH_STATUS_CODES, CONSENT_STATUS_CODES, router
+from .routes import (
+    AUTH_STATUS_CODES,
+    CONSENT_STATUS_CODES,
+    DOCUMENT_STATUS_CODES,
+    PROFILE_STATUS_CODES,
+    router,
+)
 
 logger = get_logger(__name__)
 
@@ -33,6 +45,9 @@ HTTP_CODES = {
     status.HTTP_404_NOT_FOUND: "not_found",
     status.HTTP_405_METHOD_NOT_ALLOWED: "method_not_allowed",
     status.HTTP_409_CONFLICT: "conflict",
+    status.HTTP_413_REQUEST_ENTITY_TOO_LARGE: "content_too_large",
+    status.HTTP_415_UNSUPPORTED_MEDIA_TYPE: "unsupported_media_type",
+    status.HTTP_422_UNPROCESSABLE_ENTITY: "unprocessable_entity",
     status.HTTP_429_TOO_MANY_REQUESTS: "too_many_requests",
 }
 
@@ -105,7 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=list(resolved.cors_origins),
         allow_credentials=True,
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type"],
         # A browser only exposes simple response headers to JavaScript. The site
         # reads Retry-After to tell a student how long a 429 wait is, so it must
@@ -143,15 +158,19 @@ def _install_error_handlers(app: FastAPI) -> None:
             headers={"Retry-After": str(exc.retry_after)},
         )
 
-    @app.exception_handler(DocumentPurgeError)
-    async def _purge_failed(request: Request, exc: DocumentPurgeError) -> JSONResponse:
-        # Rows are still present, so the account is intact and the student can
-        # retry once the operating system releases the file.
-        return error_response(
-            status.HTTP_409_CONFLICT,
-            "deletion_incomplete",
-            str(exc),
-        )
+    @app.exception_handler(DocumentError)
+    async def _document_error(request: Request, exc: DocumentError) -> JSONResponse:
+        # A rejected upload is the student's to fix, so the message is returned;
+        # it names the extension, size or reason, never document text or a path.
+        status_code = DOCUMENT_STATUS_CODES.get(exc.code, status.HTTP_400_BAD_REQUEST)
+        return error_response(status_code, exc.code, str(exc))
+
+    @app.exception_handler(ProfileError)
+    async def _profile_error(request: Request, exc: ProfileError) -> JSONResponse:
+        # Profile validation messages name the field and the accepted shape, which
+        # is exactly what the student needs to correct it.
+        status_code = PROFILE_STATUS_CODES.get(exc.code, status.HTTP_400_BAD_REQUEST)
+        return error_response(status_code, exc.code, str(exc))
 
     @app.exception_handler(ConsentError)
     async def _consent_error(request: Request, exc: ConsentError) -> JSONResponse:

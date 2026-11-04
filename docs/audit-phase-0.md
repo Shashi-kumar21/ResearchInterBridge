@@ -199,8 +199,10 @@ optimization) have no predecessor.
 | 2d-1 | Next.js + TypeScript shell: landing page, honest capability model, frontend CI job | merged (PR #10, ADR-010) |
 | 2d-2 | FastAPI auth/consent/account endpoints, cookie sessions, CORS + origin guard, API tests | merged (PR #11, ADR-012) |
 | 2d-3a | API hardening: per-address rate limits, bounded scrypt, purge ordering, scheme-aware origin guard | merged (PR #12) |
-| 2d-3b | Register, sign-in and consent screens wired to the JSON API | this PR (ADR-013) |
-| 2d-4 | Onboarding, profile and document upload screens | planned |
+| 2d-3b | Register, sign-in and consent screens wired to the JSON API | merged (PR #13, ADR-013) |
+| 2d-3c | Hydration gate on the account forms, `form-action 'none'`, SSR regression tests | merged (PR #14) |
+| 2d-4a | Content API: profile, document upload/parse/delete, fact confirm/apply | this PR (ADR-014) |
+| 2d-4b | Onboarding, profile and document screens | planned |
 
 Phase 2c-2 notes for reviewers:
 
@@ -339,3 +341,38 @@ makes the existing `register`/`login` safe to expose.
   `jsdom`; justified in ADR-013 because form behaviour cannot be seen by pytest.
   `engines` now names the real floor (`^22.13.0 || ^24.0.0 || >=26.0.0`), which
   is the intersection of vitest's and jsdom's ranges; `.nvmrc`/CI use Node 24.
+
+## 17. Phase 2d-4a notes (content API)
+
+* `PUT /api/profile` is a full replacement. The body cannot set `user_id`,
+  `consent_given_at` or the timestamps: unknown fields are rejected with `422`,
+  and the consent timestamp is read from the current-policy ledger row. This is
+  the invariant behind "only facts the student confirmed may be used": the API
+  never records a consent the student did not give.
+* `GET /api/documents` and friends are owner-scoped in the service. A foreign id
+  answers `404 document_missing`, not `403`, so the API does not confirm that a
+  document exists for someone else.
+* Uploads stream through a 1 MiB-chunk reader that stops at
+  `documents.MAX_DOCUMENT_BYTES`, so an oversized file is refused with `413`
+  before this process holds the whole body. `python-multipart` was added for
+  Starlette's `UploadFile`; the service still performs every extension, content,
+  size, consent and dedupe check. Identical bytes return the existing row.
+* Parsing is idempotent and leaves every candidate `pending`. `PATCH
+  /api/facts/{id}` confirms (with an optional correction) or rejects one
+  candidate; `POST /api/facts/apply` copies confirmed values into blank profile
+  fields only, unless `overwrite` is explicit.
+* Stable codes: `profile_missing`/`fact_missing`/`document_missing` (404),
+  `invalid_profile`/`invalid_document` (400), `document_too_large` (413),
+  `unsupported_document` (415), `document_unreadable` (422), plus the existing
+  `consent_required` (403) and `deletion_incomplete` (409).
+* CORS now allows `PUT` and `PATCH`; the origin guard needed no change because it
+  is method-based. All content responses are `Cache-Control: no-store`.
+* Tests (45 in `tests/test_api_content.py`): every route without a session, a
+  second student on the same database, `PUT` replacement semantics, ledger-sourced
+  consent, invalid values, unknown body fields, consent-gated upload, dedupe,
+  unsupported/empty/oversized uploads, blank-PDF parse failure, owner-scoped
+  read/parse/delete, file removal, confirm/reject/correct/apply, overwrite
+  semantics, foreign facts, `no-store`, CORS preflight for `PUT`/`PATCH`, and
+  cross-origin writes blocked before authentication.
+* Deferred to 2d-4b: the screens that call these routes. The frontend client and
+  its tests are unchanged in this slice.

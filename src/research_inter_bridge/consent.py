@@ -61,6 +61,20 @@ def consent_status(connection: sqlite3.Connection, user_id: int) -> dict[str, bo
     return {kind: has_consent(connection, user_id, kind) for kind in sorted(CONSENT_TEXTS)}
 
 
+def granted_at(connection: sqlite3.Connection, user_id: int, kind: str) -> str | None:
+    """When the current policy was accepted for ``kind``, or ``None``.
+
+    The timestamp comes from the ledger, never from a client payload: a profile
+    save can report that the student consented, but only this row decides when.
+    """
+
+    row = connection.execute(
+        "SELECT granted_at FROM consents WHERE user_id = ? AND kind = ? AND policy_version = ?",
+        (user_id, _validate_kind(kind), POLICY_VERSION),
+    ).fetchone()
+    return None if row is None else str(row["granted_at"])
+
+
 def insert_consent(
     connection: sqlite3.Connection, *, user_id: int, kind: str, granted_at: str
 ) -> None:

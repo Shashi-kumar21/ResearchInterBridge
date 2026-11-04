@@ -21,9 +21,10 @@ are not implemented yet, and nothing in this repository can send email.
 * **Python 3.11+** (see `docs/decisions.md` ADR-001). On this machine the
   default `python` is 3.10.11, so use `py -3.11` for the suite.
 * Runtime dependencies: `pymupdf` (PDF text), `python-docx` (DOCX text),
-  `fastapi` and `uvicorn` (JSON API), installed with `pip install -e .`.
-  Configuration, logging, SQLite access and the health check still use the
-  standard library only. `.[test]` adds `pytest` and `httpx` for the API tests.
+  `fastapi` and `uvicorn` (JSON API), `python-multipart` (multipart uploads),
+  installed with `pip install -e .`. Configuration, logging, SQLite access and
+  the health check still use the standard library only. `.[test]` adds `pytest`
+  and `httpx` for the API tests.
 
 ## Setup (PowerShell)
 
@@ -126,13 +127,31 @@ if the database cannot be opened.
 | `DELETE` | `/api/auth/account` | cookie + password | delete the account and all of its data |
 | `GET` | `/api/consents` | cookie | consent state |
 | `POST` | `/api/consents` | cookie | record one consent (idempotent) |
+| `GET` | `/api/profile` | cookie | profile and completeness; `404 profile_missing` before onboarding |
+| `PUT` | `/api/profile` | cookie | create or replace the profile (full replacement) |
+| `GET` | `/api/documents` | cookie | list stored documents, newest first |
+| `POST` | `/api/documents` | cookie + multipart | validate and store one PDF/DOCX/TXT (`file`, `kind`) |
+| `GET` | `/api/documents/{id}` | cookie | one document's metadata (never its bytes or path) |
+| `POST` | `/api/documents/{id}/parse` | cookie | extract text and pending fact candidates (idempotent) |
+| `DELETE` | `/api/documents/{id}` | cookie | delete the row and stored file |
+| `GET` | `/api/facts` | cookie | fact candidates grouped by field, conflicts flagged |
+| `PATCH` | `/api/facts/{id}` | cookie | confirm (optional correction) or reject one candidate |
+| `POST` | `/api/facts/apply` | cookie | copy confirmed facts into blank profile fields |
 
 Every failure has the same shape, `{"error": {"code", "message"}}`, with stable
 codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
 (409), `invalid_session` (401), `consent_required` (403), `invalid_request`
-(422), `rate_limited` (429) and `deletion_incomplete` (409). A rejected request
-body never echoes its values, so a bad password is not reflected back or written
-to the caller's logs.
+(422), `rate_limited` (429), `deletion_incomplete` (409), `profile_missing`
+(404), `fact_missing` (404), `invalid_profile` (400), `document_missing` (404),
+`document_too_large` (413), `unsupported_document` (415) and
+`document_unreadable` (422). A rejected request body never echoes its values, so
+a bad password is not reflected back or written to the caller's logs.
+
+Documents are capped at 10 MiB and must be a real PDF, DOCX or plain-text file;
+the extension and the sniffed content must agree. Uploading identical bytes twice
+returns the existing record instead of storing a second copy. Storing or parsing
+a document requires the current `document_processing` consent. Profile,
+document and fact responses are `Cache-Control: no-store`.
 
 `register` and `login` are rate-limited per transport peer address before any
 password hashing happens: 30 registrations per hour and 120 logins per 15
