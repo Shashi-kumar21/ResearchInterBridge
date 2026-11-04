@@ -444,6 +444,47 @@ def test_delete_removes_the_row_and_the_file(client: TestClient, settings: Setti
     assert client.delete(f"/api/documents/{uploaded['id']}").status_code == 404
 
 
+def test_a_locked_file_keeps_the_document_and_can_be_retried(
+    client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert register(client).status_code == 201
+    uploaded = upload(client).json()
+    with db.session(settings.database_path) as connection:
+        record = document_service.get_document(
+            connection,
+            document_id=uploaded["id"],
+            user_id=client.get("/api/auth/me").json()["account"]["user_id"],
+        )
+    stored_file = settings.data_directory / "documents" / record.storage_path
+    assert stored_file.is_file()
+
+    original_unlink = Path.unlink
+
+    def locked_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == stored_file:
+            raise PermissionError("the file is open in another program")
+        original_unlink(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "unlink", locked_unlink)
+
+    refused = client.delete(f"/api/documents/{uploaded['id']}")
+
+    assert refused.status_code == 409
+    assert error_code(refused) == "deletion_incomplete"
+    # The row is still there, so the student can close the program and retry;
+    # deleting the row first would have orphaned an unreferenced file.
+    assert [item["id"] for item in client.get("/api/documents").json()["documents"]] == [
+        uploaded["id"]
+    ]
+    assert stored_file.exists()
+
+    monkeypatch.undo()
+    retried = client.delete(f"/api/documents/{uploaded['id']}")
+
+    assert retried.status_code == 204
+    assert not stored_file.exists()
+
+
 # --------------------------------------------------------------------------- #
 # facts
 # --------------------------------------------------------------------------- #
@@ -514,6 +555,18 @@ def test_apply_only_fills_blank_fields_unless_overwrite_is_requested(
     assert client.get("/api/profile").json()["phone"] == "+91 98765 43210"
 
 
+def test_apply_refuses_an_unknown_field_name(client: TestClient) -> None:
+    assert register(client).status_code == 201
+    assert client.put("/api/profile", json=profile_body()).status_code == 200
+    upload_and_parse(client)
+
+    response = client.post("/api/facts/apply", json={"fields": ["gpa_typo"]})
+
+    assert response.status_code == 400
+    assert error_code(response) == "invalid_profile"
+    assert "applicable fields" in response.text
+
+
 def test_confirming_a_corrected_value_is_validated(client: TestClient) -> None:
     assert register(client).status_code == 201
     upload_and_parse(client)
@@ -532,9 +585,55 @@ def test_confirming_a_corrected_value_is_validated(client: TestClient) -> None:
         json={"status": "confirmed", "corrected_value": "9.1/10"},
     )
     assert corrected.status_code == 200
-    confirmed = client.get("/api/facts").json()["groups"]
-    value = next(group for group in confirmed if group["field"] == "gpa")["confirmed"][0]["value"]
-    assert value == "9.1/10"
+
+    # Editing an already-confirmed fact must apply the new correction, not answer
+    # 200 and silently keep the old value.
+    edited = client.patch(
+        f"/api/facts/{gpa_fact['id']}",
+        json={"status": "confirmed", "corrected_value": "9.4/10"},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["already_set"] is True
+    groups = client.get("/api/facts").json()["groups"]
+    group = next(group for group in groups if group["field"] == "gpa")
+    assert [candidate["value"] for candidate in group["confirmed"]] == ["9.4/10"]
+    assert group["pending"] == []
+
+    # Re-parsing the same document must not bring the original 8.9/10 back as a
+    # new pending candidate.
+    document_id = client.get("/api/documents").json()["documents"][0]["id"]
+    assert client.post(f"/api/documents/{document_id}/parse").status_code == 200
+    groups = client.get("/api/facts").json()["groups"]
+    group = next(group for group in groups if group["field"] == "gpa")
+    assert group["pending"] == []
+    assert [candidate["value"] for candidate in group["confirmed"]] == ["9.4/10"]
+
+
+def test_confirming_a_previously_rejected_candidate_moves_the_single_truth(
+    client: TestClient,
+) -> None:
+    assert register(client).status_code == 201
+    assert upload_and_parse(client)["fact_count"] > 0
+    other_text = CV_TEXT.replace("98765 43210", "98765 11111").encode()
+    assert upload_and_parse(client, other_text)["fact_count"] > 0
+
+    groups = {group["field"]: group for group in client.get("/api/facts").json()["groups"]}
+    first, second = groups["phone"]["pending"]
+    assert first["value"] != second["value"]
+
+    assert (
+        client.patch(f"/api/facts/{first['id']}", json={"status": "confirmed"}).status_code == 200
+    )
+    # `second` is now rejected. Confirming it explicitly must leave one truth.
+    moved = client.patch(f"/api/facts/{second['id']}", json={"status": "confirmed"})
+
+    assert moved.status_code == 200
+    group = next(
+        group for group in client.get("/api/facts").json()["groups"] if group["field"] == "phone"
+    )
+    assert [candidate["value"] for candidate in group["confirmed"]] == [second["value"]]
+    assert group["pending"] == []
+    assert group["has_conflict"] is False
 
 
 def test_rejecting_a_fact_hides_it_from_the_candidate_list(client: TestClient) -> None:
@@ -566,14 +665,18 @@ def test_a_confirmed_fact_cannot_be_rejected(client: TestClient) -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "extra", "code"),
+    ("status", "extra", "status_code", "code"),
     [
-        ("maybe", {}, "invalid_profile"),
-        ("rejected", {"corrected_value": "8.9"}, "invalid_profile"),
+        ("maybe", {}, 422, "invalid_request"),
+        ("rejected", {"corrected_value": "8.9"}, 400, "invalid_profile"),
     ],
 )
 def test_fact_update_rejects_an_unsupported_status_or_correction(
-    client: TestClient, status: str, extra: dict[str, str], code: str
+    client: TestClient,
+    status: str,
+    extra: dict[str, str],
+    status_code: int,
+    code: str,
 ) -> None:
     assert register(client).status_code == 201
     upload_and_parse(client)
@@ -581,7 +684,7 @@ def test_fact_update_rejects_an_unsupported_status_or_correction(
 
     response = client.patch(f"/api/facts/{fact_id}", json={"status": status, **extra})
 
-    assert response.status_code == 400
+    assert response.status_code == status_code
     assert error_code(response) == code
 
 

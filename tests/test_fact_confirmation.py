@@ -119,6 +119,67 @@ def test_confirming_twice_is_idempotent(connection: sqlite3.Connection, user_id:
     assert actions.count("profile.fact_confirmed") == 1
 
 
+def test_confirming_a_previously_rejected_candidate_leaves_one_truth(
+    connection: sqlite3.Connection, user_id: int
+) -> None:
+    first = _add(connection, user_id, "phone", "+91 98765 43210", "document:1")
+    second = _add(connection, user_id, "phone", "+44 7700 900123", "document:2")
+    confirm_fact(connection, user_id=user_id, fact_id=first, actor="student:1")
+
+    # `second` was auto-rejected by that confirmation. Re-confirming it must move
+    # the single truth instead of adding a second confirmed row.
+    assert confirm_fact(connection, user_id=user_id, fact_id=second, actor="student:1") is True
+
+    group = _group(connection, user_id, "phone")
+    assert _candidate_ids(group, "confirmed") == [second]
+    assert group.pending == ()
+    assert group.has_conflict is False
+    assert [fact["value"] for fact in confirmed_facts(connection, user_id)] == ["+44 7700 900123"]
+
+
+def test_reconfirming_with_a_correction_updates_the_confirmed_value(
+    connection: sqlite3.Connection, user_id: int
+) -> None:
+    fact_id = _add(connection, user_id, "gpa", "8.9/10", "document:1")
+    confirm_fact(
+        connection, user_id=user_id, fact_id=fact_id, actor="student:1", corrected_value="9.1/10"
+    )
+
+    assert (
+        confirm_fact(
+            connection,
+            user_id=user_id,
+            fact_id=fact_id,
+            actor="student:1",
+            corrected_value="9.4/10",
+        )
+        is True
+    )
+
+    (fact,) = confirmed_facts(connection, user_id)
+    assert fact["value"] == "9.4/10"
+
+
+def test_reparsing_does_not_resurrect_a_corrected_value(
+    connection: sqlite3.Connection, user_id: int
+) -> None:
+    fact_id = _add(connection, user_id, "gpa", "8.9/10", "document:1")
+    confirm_fact(
+        connection, user_id=user_id, fact_id=fact_id, actor="student:1", corrected_value="9.4/10"
+    )
+
+    store_facts(
+        connection,
+        user_id=user_id,
+        document_id=1,
+        facts=(ExtractedFact("gpa", "8.9/10", 0.8),),
+    )
+
+    group = _group(connection, user_id, "gpa")
+    assert group.pending == ()
+    assert [candidate.value for candidate in group.confirmed] == ["9.4/10"]
+
+
 def test_correction_replaces_the_extracted_value(
     connection: sqlite3.Connection, user_id: int
 ) -> None:
@@ -271,6 +332,18 @@ def test_graduation_year_is_not_applied_to_a_date_field(
 
     assert applied == ()
     assert load_profile(connection, user_id).expected_graduation is None
+
+
+def test_apply_refuses_an_unknown_field_name(connection: sqlite3.Connection, user_id: int) -> None:
+    save_profile(connection, _profile(user_id), actor="student:1")
+
+    with pytest.raises(ProfileError, match="applicable fields"):
+        apply_confirmed_facts_to_profile(
+            connection,
+            user_id=user_id,
+            actor="student:1",
+            fields=frozenset({"graduation_year_typo"}),
+        )
 
 
 def test_apply_requires_a_profile(connection: sqlite3.Connection, user_id: int) -> None:

@@ -12,6 +12,8 @@ Rules enforced here:
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -227,7 +229,7 @@ class FactUpdateRequest(_StrictModel):
     only meaningful when confirming, and the service rejects a blank value.
     """
 
-    status: str
+    status: Literal["confirmed", "rejected"]
     corrected_value: str | None = None
 
 

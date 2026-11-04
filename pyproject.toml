@@ -18,8 +18,10 @@ dependencies = [
     "uvicorn>=0.30",
     # Multipart parsing for the document upload endpoint (ADR-014). Starlette
     # needs it for `UploadFile`; without it a multipart request is rejected
-    # before the service's own size/content checks can run.
-    "python-multipart>=0.0.9",
+    # before the service's own size/content checks can run. The floor is 0.0.30:
+    # earlier versions have a quadratic-time urlencoded parser
+    # (GHSA-5rvq-cxj2-64vf), and Starlette runs it before route authentication.
+    "python-multipart>=0.0.30",
 ]
 
 [project.optional-dependencies]

@@ -276,23 +276,34 @@ over the services:
   the timestamps are rejected as unknown fields and filled server-side; the
   consent timestamp comes from the consent ledger, so a payload cannot claim a
   consent that was never recorded.
-* Uploads are `multipart/form-data`, which requires `python-multipart`. It is
-  the dependency Starlette itself uses for `UploadFile`; without it the route
-  fails before the service's own extension/content/size checks run. The route
-  drains the upload in 1 MiB chunks and stops at `documents.MAX_DOCUMENT_BYTES`,
-  so an oversized file is refused before the whole body is held in memory.
-  Starlette has already spooled the part to disk at that point; the cap bounds
-  what this process adds.
+* Uploads are `multipart/form-data`, which requires `python-multipart` at
+  `>=0.0.30`: older releases have a quadratic-time urlencoded parser
+  (`GHSA-5rvq-cxj2-64vf`), and Starlette runs that parser before route
+  authentication. The route drains the upload in 1 MiB chunks and stops at
+  `documents.MAX_DOCUMENT_BYTES`, so an oversized file is refused before the
+  whole body is held in memory. The bound is memory, not pre-auth disk usage:
+  Starlette has already parsed and spooled the complete body before the endpoint
+  (and its auth dependency) runs. That is acceptable while the API is bound to
+  loopback; a public deployment needs an ASGI-level body limit in front of this
+  app, which is recorded rather than pretended.
 * Every document read, delete and parse is owner-scoped in the service, so
   another student's id answers `404 document_missing` rather than `403`. That
   avoids confirming that an id exists.
+* Deleting a document unlinks the file **before** deleting the row. If the file
+  is locked, the row survives and the request answers `409 deletion_incomplete`,
+  so a retry is possible; deleting the row first would leave bytes that account
+  deletion (which walks rows) could never find again.
 * Personal content is `Cache-Control: no-store`, like `/api/auth/me`. A shared
   cache must not keep a CV or a profile.
 * Fact confirmation stays a `PATCH` on one candidate with `status` and an
-  optional `corrected_value`; `POST /api/facts/apply` copies only confirmed
-  facts and keeps values the student typed unless `overwrite` is explicit.
-  Re-parsing a document is idempotent, so a retried request cannot duplicate or
-  confirm a candidate.
+  optional `corrected_value`. Confirming makes that row the only confirmed truth
+  for its field, rejecting competing pending **and** previously confirmed rows;
+  confirming an already-confirmed row with a correction applies the new value
+  instead of silently ignoring it. `POST /api/facts/apply` copies only confirmed
+  facts, keeps values the student typed unless `overwrite` is explicit, and
+  refuses a field name outside the applicable set instead of ignoring a typo.
+  Re-parsing is idempotent: a field already confirmed from that same document is
+  skipped, so re-parsing cannot resurrect a value the student corrected.
 * Errors carry stable codes mapped next to the routes: `profile_missing` (404),
   `fact_missing` (404), `invalid_profile` (400), `invalid_document` (400),
   `document_missing` (404), `document_too_large` (413),

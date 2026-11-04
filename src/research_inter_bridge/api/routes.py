@@ -12,7 +12,6 @@ from ..errors import (
     DocumentNotFoundError,
     DocumentTooLargeError,
     FactNotFoundError,
-    ProfileError,
 )
 from ..health import check_health
 from .deps import (
@@ -677,31 +676,19 @@ def update_fact(
     """Confirm (optionally with a correction) or reject one fact candidate."""
 
     response.headers["Cache-Control"] = "no-store"
-    if payload.status not in ("confirmed", "rejected"):
-        raise ProfileError("status must be 'confirmed' or 'rejected'.")
-    if payload.status == "rejected" and payload.corrected_value is not None:
-        raise ProfileError("corrected_value is only accepted when confirming a fact.")
-
-    row = facts.fact_status(connection, user_id=account.user_id, fact_id=fact_id)
-    if row is None:
+    current = facts.fact_status(connection, user_id=account.user_id, fact_id=fact_id)
+    if current is None:
         raise FactNotFoundError(f"fact {fact_id} does not exist for this account.")
-    already_set = row == payload.status
+    already_set = current == payload.status
 
-    if payload.status == "confirmed":
-        found = facts.confirm_fact(
-            connection,
-            user_id=account.user_id,
-            fact_id=fact_id,
-            actor=f"user:{account.user_id}",
-            corrected_value=payload.corrected_value,
-        )
-    else:
-        found = facts.reject_fact(
-            connection,
-            user_id=account.user_id,
-            fact_id=fact_id,
-            actor=f"user:{account.user_id}",
-        )
+    found = facts.update_fact(
+        connection,
+        user_id=account.user_id,
+        fact_id=fact_id,
+        actor=f"user:{account.user_id}",
+        status=payload.status,
+        corrected_value=payload.corrected_value,
+    )
     if not found:  # pragma: no cover - the row was just read in this transaction
         raise FactNotFoundError(f"fact {fact_id} does not exist for this account.")
 

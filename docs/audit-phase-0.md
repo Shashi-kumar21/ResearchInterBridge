@@ -354,25 +354,40 @@ makes the existing `register`/`login` safe to expose.
   document exists for someone else.
 * Uploads stream through a 1 MiB-chunk reader that stops at
   `documents.MAX_DOCUMENT_BYTES`, so an oversized file is refused with `413`
-  before this process holds the whole body. `python-multipart` was added for
-  Starlette's `UploadFile`; the service still performs every extension, content,
-  size, consent and dedupe check. Identical bytes return the existing row.
+  before this process holds the whole body. `python-multipart>=0.0.30` was added
+  for Starlette's `UploadFile`; the floor avoids the quadratic urlencoded parser
+  in `GHSA-5rvq-cxj2-64vf`, which Starlette runs before route authentication.
+  The service still performs every extension, content, size, consent and dedupe
+  check. Identical bytes return the existing row. Starlette spools the parsed
+  body before the endpoint, so the cap bounds memory, not pre-auth disk use;
+  that limit is documented rather than hidden (loopback deployment today).
+* Deleting a document unlinks the file before deleting the row. A locked file
+  answers `409 deletion_incomplete` and keeps the document, so the student can
+  retry; the earlier order could orphan a file that account deletion never sees.
 * Parsing is idempotent and leaves every candidate `pending`. `PATCH
   /api/facts/{id}` confirms (with an optional correction) or rejects one
-  candidate; `POST /api/facts/apply` copies confirmed values into blank profile
-  fields only, unless `overwrite` is explicit.
+  candidate. Confirming a candidate makes it the field's only confirmed truth:
+  competing pending and previously confirmed rows are rejected, and confirming
+  an already-confirmed row with a correction applies the new value. Re-parsing
+  skips a field already confirmed from that document, so a correction is not
+  resurrected as a new pending candidate.
+* `POST /api/facts/apply` copies confirmed values into blank profile fields only,
+  unless `overwrite` is explicit, and refuses an unknown field name with `400`
+  instead of answering `200` with nothing applied.
 * Stable codes: `profile_missing`/`fact_missing`/`document_missing` (404),
   `invalid_profile`/`invalid_document` (400), `document_too_large` (413),
   `unsupported_document` (415), `document_unreadable` (422), plus the existing
   `consent_required` (403) and `deletion_incomplete` (409).
 * CORS now allows `PUT` and `PATCH`; the origin guard needed no change because it
   is method-based. All content responses are `Cache-Control: no-store`.
-* Tests (45 in `tests/test_api_content.py`): every route without a session, a
+* Tests (48 in `tests/test_api_content.py`): every route without a session, a
   second student on the same database, `PUT` replacement semantics, ledger-sourced
   consent, invalid values, unknown body fields, consent-gated upload, dedupe,
   unsupported/empty/oversized uploads, blank-PDF parse failure, owner-scoped
-  read/parse/delete, file removal, confirm/reject/correct/apply, overwrite
-  semantics, foreign facts, `no-store`, CORS preflight for `PUT`/`PATCH`, and
-  cross-origin writes blocked before authentication.
+  read/parse/delete, file removal, a locked file and retry, confirm/reject/
+  correct/apply, repeated correction, a previously rejected candidate becoming
+  the single truth, overwrite semantics, unknown apply fields, foreign facts,
+  `no-store`, CORS preflight for `PUT`/`PATCH`, and cross-origin writes blocked
+  before authentication.
 * Deferred to 2d-4b: the screens that call these routes. The frontend client and
   its tests are unchanged in this slice.
