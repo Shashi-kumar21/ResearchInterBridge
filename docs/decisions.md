@@ -391,3 +391,55 @@ support, and `web/lib/errors.ts` gains the content codes from ADR-014.
   and locked-file failure, conflict display, confirm/reject/correct of a pending
   fact and of a confirmed one, apply with overwrite and its applicable-field
   gating, source labels, and a `401` arriving during an action.
+
+## ADR-016 — Discovery is source-agnostic and cache-first
+
+**Status:** accepted 2026-11-05 · **Decided by:** Dev (within ADR-007, ADR-012) · **Spec:** `task.md` §3.4, §13
+
+Phase 4 starts with no live source configured yet: provider choice and the
+polite-pool contact email are still pending, and writing an adapter first would
+bake one provider's shape into the schema and invite a network call per query.
+
+**Decision:** build the shared cache and the adapter boundary before any live
+source.
+
+* Migration 6 adds `institutions`, `departments`, `programs`, `program_sources`,
+  `research_cache_entries` and `research_query_index` (§7, §13.1). None of these
+  tables carries a `user_id`: they are public research data (ADR-007).
+* `research_cache` owns canonical keys, the §13.3 TTL policy and provenance
+  (`source_url`, `fetched_at`, `verified_at`, `content_hash`, adapter, parser
+  version, payload pointer, last attempt/error). `discovery` owns query
+  normalisation, validation, storage and the refresh decision.
+* A `ProgramAdapter` is injected; this slice ships none. `discover --offline`
+  browses the cache, and an online query without an adapter fails with an
+  actionable `DiscoveryUnavailableError` instead of pretending to search.
+* `DiscoveredProgram` defaults to unknown (`None`, empty, `unverified`). The
+  validator rejects malformed records (bad URL, impossible date range, unknown
+  status, out-of-range confidence) and never fills a gap. A record is stored with
+  exactly the values its source stated.
+* A fresh query performs zero adapter calls. A non-empty result is fresh while
+  each program's TTL holds; an empty result is cached for one day so repeating a
+  query that found nothing does not call the source either.
+* A failed refresh keeps the previous rows, marks their cache entries stale
+  (`last_error`) and audits the failure by error class. Stale rows are still
+  returned, labelled stale, because deleting verified data is worse than showing
+  it with an honest timestamp.
+* Institution and department cache entries are derived from the official program
+  page for now and refreshed with it. Their own pages are added with the browse
+  hierarchy (§13.2).
+* Raw payloads are referenced by path only; an adapter that stores one must keep
+  it outside Git and under the data directory.
+
+**Consequences:**
+
+* The next slice (4b) adds a concrete adapter and needs the Owner's polite-pool
+  contact email; the adapter can then be tested with mocked HTTP and no real
+  requests.
+* The cache is already queryable offline, so a browse API and the
+  university → department → faculty screens can be layered on these reads
+  without touching the schema.
+* The one-day empty-result TTL is a product choice made here; it trades a small
+  amount of freshness for not hammering a source with queries that rarely
+  change.
+* The bucket-of-three rule (§13.4) governs personalised result sets in Phase 6.
+  Public program/faculty records are shared by design and are not gated by it.

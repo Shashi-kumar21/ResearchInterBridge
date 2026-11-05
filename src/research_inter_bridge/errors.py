@@ -140,3 +140,27 @@ class RateLimitError(ResearchInterBridgeError):
     def __init__(self, message: str, *, retry_after: int) -> None:
         super().__init__(message)
         self.retry_after = max(1, int(retry_after))
+
+
+class CacheError(ResearchInterBridgeError):
+    """Raised when a shared-cache key, TTL or provenance value is invalid."""
+
+
+class DiscoveryError(ResearchInterBridgeError):
+    """Raised when a research query or a provider record is invalid.
+
+    The message must name the field and what a valid value looks like; it must
+    never echo a provider payload or a student's private data.
+    """
+
+    code = "invalid_discovery"
+
+
+class DiscoveryUnavailableError(DiscoveryError):
+    """Raised when no source is configured and the cache has nothing to serve.
+
+    Callers should either configure an adapter or ask for cache-only browsing,
+    so the failure is actionable instead of an empty page.
+    """
+
+    code = "discovery_unavailable"

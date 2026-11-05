@@ -202,7 +202,8 @@ optimization) have no predecessor.
 | 2d-3b | Register, sign-in and consent screens wired to the JSON API | merged (PR #13, ADR-013) |
 | 2d-3c | Hydration gate on the account forms, `form-action 'none'`, SSR regression tests | merged (PR #14) |
 | 2d-4a | Content API: profile, document upload/parse/delete, fact confirm/apply | merged (PR #15, ADR-014) |
-| 2d-4b | Onboarding/profile, document upload/list and fact-review screens | this PR (ADR-015) |
+| 2d-4b | Onboarding/profile, document upload/list and fact-review screens | merged (PR #16, ADR-015) |
+| 4a | Shared research cache, program validation/provenance, offline `discover` | this PR (ADR-016) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -464,3 +465,35 @@ makes the existing `register`/`login` safe to expose.
 * Checks run in this slice: `npm run lint`, `npm run typecheck`, `npm test`
   (109 passed) and `npm run build` (all nine routes prerender); `ruff check`,
   `ruff format --check`, `pytest`.
+
+## 19. Phase 4a notes (shared research cache)
+
+* Migration 6 adds `institutions`, `departments`, `programs`, `program_sources`,
+  `research_cache_entries` and `research_query_index` (`task.md` §7, §13.1). No
+  table carries a `user_id`: public research data is shared by design (ADR-007).
+* `research_cache.py` owns the canonical key, the §13.3 TTL table, content hash
+  and provenance. `discovery.py` owns query normalisation/fingerprinting,
+  adapter records, validation, storage and the refresh decision.
+* A fresh query performs zero adapter calls, including a repeated query whose
+  previous answer was empty (cached for one day). A stale query refreshes once;
+  a failed refresh keeps the previous rows, marks the entries stale with
+  `last_error` and writes `research.refresh_failed` with the error class only.
+* `DiscoveredProgram` treats absent values as unknown (`None`, empty tuple,
+  `unverified`). Validation rejects bad URLs, impossible date ranges, unknown
+  statuses and out-of-range confidence; it never fills a missing field. Stored
+  programs therefore distinguish "not stated" (NULL) from a stated negative.
+* Program TTLs: 14 days outside an application window, 3 days inside it, 1 day
+  within a week of the closing date (or after it), so a closed status cannot be
+  served from an old entry for long.
+* Institution and department cache entries are derived from the program page in
+  this slice; the browse hierarchy (§13.2) will give them their own pages. An
+  adapter's raw payload is referenced by path only and must stay outside Git.
+* `discover --offline` browses the cache without an adapter. No live adapter is
+  configured yet, so an online query with an empty cache exits 1 with an
+  actionable message instead of pretending to search. The polite-pool contact
+  email is needed for the next slice (4b), not this one.
+* Tests: 36 new (`tests/test_research_cache.py`, `tests/test_discovery.py`)
+  covering key/TTL boundaries, validation, provenance, zero-call cache hits,
+  refresh-in-place, stale fallback after a failure, empty-result caching,
+  offline browsing, cross-connection reuse and the CLI paths. Full suite: 494
+  passed, 2 skipped.
