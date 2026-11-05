@@ -21,6 +21,7 @@ const GROUPED = {
           field: "contact_email",
           value: "ada@example.edu",
           source: "document:1",
+          source_name: "cv.pdf",
           status: "pending",
           confidence: 0.9,
         },
@@ -29,6 +30,7 @@ const GROUPED = {
           field: "contact_email",
           value: "ada@old.example.edu",
           source: "document:2",
+          source_name: "old-cv.pdf",
           status: "pending",
           confidence: null,
         },
@@ -43,6 +45,7 @@ const GROUPED = {
           field: "gpa",
           value: "3.8/4.0",
           source: "document:1",
+          source_name: "cv.pdf",
           status: "confirmed",
           confidence: 0.8,
         },
@@ -63,6 +66,7 @@ const UPDATED = {
           field: "contact_email",
           value: "ada@new.example.edu",
           source: "document:1",
+          source_name: "cv.pdf",
           status: "confirmed",
           confidence: 0.9,
         },
@@ -213,5 +217,141 @@ describe("FactReview", () => {
     await user.click(screen.getByRole("button", { name: "Try again" }));
 
     expect(await screen.findByRole("region", { name: "Contact email" })).toBeVisible();
+  });
+
+  it("names the source document, never the internal id", async () => {
+    fetchMock.mockResolvedValue(json(GROUPED));
+    render(<FactReview />);
+
+    const group = await screen.findByRole("region", { name: "Contact email" });
+    expect(within(group).getByText(/From cv\.pdf/)).toBeVisible();
+    expect(within(group).getByText(/From old-cv\.pdf/)).toBeVisible();
+    expect(within(group).queryByText(/document:1/)).toBeNull();
+  });
+
+  it("says so when a confirmed fact outlived its document", async () => {
+    fetchMock.mockResolvedValue(
+      json({
+        groups: [
+          {
+            field: "phone",
+            has_conflict: false,
+            confirmed: [
+              {
+                id: 4,
+                field: "phone",
+                value: "+91 98765 43210",
+                source: "document:9",
+                source_name: null,
+                status: "confirmed",
+                confidence: 0.7,
+              },
+            ],
+            pending: [],
+          },
+        ],
+      }),
+    );
+    render(<FactReview />);
+
+    const group = await screen.findByRole("region", { name: "Phone" });
+    expect(within(group).getByText(/From a document you deleted/)).toBeVisible();
+  });
+
+  it("corrects a confirmed fact in place", async () => {
+    const CORRECTED = {
+      groups: [
+        GROUPED.groups[0],
+        {
+          field: "gpa",
+          has_conflict: false,
+          confirmed: [
+            {
+              id: 3,
+              field: "gpa",
+              value: "3.9/4.0",
+              source: "document:1",
+              source_name: "cv.pdf",
+              status: "confirmed",
+              confidence: 0.8,
+            },
+          ],
+          pending: [],
+        },
+      ],
+    };
+    fetchMock
+      .mockResolvedValueOnce(json(GROUPED))
+      .mockResolvedValueOnce(json({ fact_id: 3, status: "confirmed", already_set: true }))
+      .mockResolvedValueOnce(json(CORRECTED));
+    const user = userEvent.setup();
+    render(<FactReview />);
+
+    const group = await screen.findByRole("region", { name: "CGPA / GPA" });
+    await user.click(within(group).getByRole("button", { name: "Correct 3.8/4.0" }));
+    const field = within(group).getByLabelText("Corrected value for 3.8/4.0");
+    await user.clear(field);
+    await user.type(field, "3.9/4.0");
+    await user.click(
+      within(group).getByRole("button", { name: "Save correction to 3.8/4.0" }),
+    );
+
+    // `already_set` is true because the row was already confirmed, but the value
+    // changed: the message must not claim nothing happened.
+    expect(await screen.findByText(/Fact corrected/)).toBeVisible();
+    expect(await screen.findByText("3.9/4.0")).toBeVisible();
+    const patchCall = fetchMock.mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === "PATCH",
+    );
+    expect(JSON.parse(String((patchCall?.[1] as RequestInit).body))).toEqual({
+      status: "confirmed",
+      corrected_value: "3.9/4.0",
+    });
+  });
+
+  it("keeps apply disabled when only non-applicable facts are confirmed", async () => {
+    fetchMock.mockResolvedValue(
+      json({
+        groups: [
+          {
+            field: "expected_graduation_year",
+            has_conflict: false,
+            confirmed: [
+              {
+                id: 5,
+                field: "expected_graduation_year",
+                value: "2027",
+                source: "document:1",
+                source_name: "cv.pdf",
+                status: "confirmed",
+                confidence: 0.6,
+              },
+            ],
+            pending: [],
+          },
+        ],
+      }),
+    );
+    render(<FactReview />);
+
+    await screen.findByRole("region", { name: "Expected graduation year" });
+    expect(screen.getByRole("button", { name: "Apply confirmed facts to profile" })).toBeDisabled();
+  });
+
+  it("returns to the signed-out panel when a decision loses the session", async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(GROUPED))
+      .mockResolvedValueOnce(
+        json({ error: { code: "invalid_session", message: "authentication required." } }, 401),
+      );
+    const user = userEvent.setup();
+    render(<FactReview />);
+
+    const group = await screen.findByRole("region", { name: "Contact email" });
+    await user.click(
+      within(group).getByRole("button", { name: "Reject ada@old.example.edu" }),
+    );
+
+    expect(await screen.findByRole("heading", { name: "You are not signed in" })).toBeVisible();
   });
 });

@@ -412,15 +412,20 @@ makes the existing `register`/`login` safe to expose.
   persisted by the server, so the list is refreshed after the error and the
   document keeps the reason. Delete asks for confirmation and a `409
   deletion_incomplete` (locked file) keeps the row and explains that the file is
-  in use. Identical uploads still dedupe server-side; the list avoids a duplicate
-  row if the same id comes back.
+  in use. Deleting also removes the document's non-confirmed facts in the same
+  transaction (confirmed facts are profile data and stay), so a pending candidate
+  cannot be confirmed through a stale id after its file is gone. Identical
+  uploads still dedupe server-side; the notice uses the returned row's status, so
+  a re-uploaded file that is already parsed is not described as new.
 * The fact screen shows every pending candidate, flags a field whose documents
   disagree, and sends confirm/reject as a `PATCH`. After one decision it reloads
   the whole list because confirming makes that candidate the only truth for the
   field and rejects competing rows in the same transaction. A confirmed fact has
-  no unconfirm control because the server forbids rejecting it; confirming a
-  different candidate replaces it. Corrections are optional and trimmed before
-  sending.
+  no unconfirm control because the server forbids rejecting it, but it can be
+  corrected in place: "Correct" re-confirms the row with a new value. A field
+  whose source document was deleted says so, and corrections are trimmed before
+  sending. The fact API sends `source_name` (the document's display name, `null`
+  once deleted) so the screen never shows an internal `document:3` id.
 * `POST /api/facts/apply` is called with `{fields: null, overwrite}`: blank
   profile fields are filled by default, and the overwrite checkbox is the only
   way to replace a value the student typed. A missing profile keeps the API's
@@ -428,8 +433,10 @@ makes the existing `register`/`login` safe to expose.
 * Error copy for the new codes lives in `web/lib/errors.ts`:
   `profile_missing`, `invalid_profile`, `document_too_large`,
   `unsupported_document`, `document_unreadable`, `document_missing`,
-  `fact_missing` and `deletion_incomplete`. A `401` on load or during an action
-  returns to the signed-out panel shared by all three screens.
+  `fact_missing` and `deletion_incomplete`. The `document_too_large` sentence
+  names no size, because the limit lives in `documents.MAX_DOCUMENT_BYTES` and a
+  hardcoded number would drift. A `401` on load or during an action returns to
+  the signed-out panel shared by all three screens.
 * Repeated rows carry the same visible control names ("Confirm", "Reject",
   "Delete", "Extract facts"), which is ambiguous for a screen reader and for
   voice control. Each row's controls therefore have an explicit accessible name
@@ -441,12 +448,19 @@ makes the existing `register`/`login` safe to expose.
   cards now say they run on the website, the website card no longer says content
   screens are "still to come", and the landing note names the new capabilities.
   `roadmap.test.ts` asserts the new surfaces and the absence of that phrase.
-* Frontend tests: 100 total (up from 61). New: API client `PUT`/`PATCH`/`DELETE`,
+* Frontend tests: 109 total (up from 61). New: API client `PUT`/`PATCH`/`DELETE`,
   multipart upload without a JSON content type, profile/client error codes;
   content error copy; byte/date formatting; Testing Library tests for the profile
   (signed out, new profile, full replacement, stored profile, server validation,
-  retry), documents (signed out, empty, upload, parse, failed parse, delete,
-  cancelled delete, locked-file failure), and facts (signed out, empty, conflict
-  and correction, reject, apply with overwrite, missing profile, retry).
+  retry), documents (signed out, empty, upload, deduped re-upload, parse, failed
+  parse, delete, cancelled delete, locked-file failure, `401` during an action),
+  and facts (signed out, empty, conflict and correction, source labels, reject,
+  correct a confirmed fact, apply with overwrite, non-applicable gating, missing
+  profile, retry, `401` during an action).
+* The Python half of the same fix is covered by a cascade service test (pending and
+  rejected rows removed, confirmed row kept, audit count recorded) and an API test
+  (`GET /api/facts` loses the candidates, a stale `PATCH` answers `404
+  fact_missing`, `source_name` is `null` after deletion).
 * Checks run in this slice: `npm run lint`, `npm run typecheck`, `npm test`
-  (100 passed) and `npm run build` (all nine routes prerender).
+  (109 passed) and `npm run build` (all nine routes prerender); `ruff check`,
+  `ruff format --check`, `pytest`.

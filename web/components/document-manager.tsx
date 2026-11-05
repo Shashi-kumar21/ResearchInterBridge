@@ -134,12 +134,19 @@ export function DocumentManager() {
     setUploading(true);
     try {
       const uploaded = await uploadDocument(file, kind);
+      // Identical bytes dedupe on the server and return the stored row, which
+      // may already be parsed: say so instead of claiming a new upload.
+      const existing = documents.find((document) => document.id === uploaded.id);
       setDocuments((current) => [
         uploaded,
         ...current.filter((document) => document.id !== uploaded.id),
       ]);
       setNotice(
-        `${uploaded.display_name} uploaded. Extract facts next, or upload another document.`,
+        existing === undefined
+          ? `${uploaded.display_name} uploaded. Extract facts next, or upload another document.`
+          : existing.status === "parsed"
+            ? `${uploaded.display_name} was already uploaded and has been parsed. Its facts are on the fact-review page.`
+            : `${uploaded.display_name} was already uploaded. Choose “Extract facts” on its row.`,
       );
       setFile(null);
       if (fileInput.current) {

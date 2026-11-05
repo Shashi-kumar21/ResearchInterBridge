@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DocumentManager } from "./document-manager";
@@ -200,5 +201,55 @@ describe("DocumentManager", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/in use/);
     expect(screen.getByRole("heading", { name: "ada-cv.pdf" })).toBeVisible();
+  });
+
+  it("describes a deduped re-upload as the existing document", async () => {
+    const parsed = {
+      ...CV,
+      status: "parsed",
+      parsed_at: "2026-11-03T08:00:00Z",
+    };
+    fetchMock
+      .mockResolvedValueOnce(json({ documents: [parsed] }))
+      .mockResolvedValueOnce(json(parsed, 201));
+    const user = userEvent.setup();
+    render(<DocumentManager />);
+
+    await screen.findByRole("heading", { name: "ada-cv.pdf" });
+    const file = new File(["%PDF-1.4"], "ada-cv.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("File"), file);
+    await user.click(screen.getByRole("button", { name: "Upload document" }));
+
+    // Identical bytes return the stored row, which is already parsed: the notice
+    // must not tell the student to extract facts that already exist.
+    expect(await screen.findByText(/already uploaded and has been parsed/)).toBeVisible();
+    expect(screen.getAllByRole("heading", { name: "ada-cv.pdf" })).toHaveLength(1);
+  });
+
+  it("returns to the signed-out panel when an action loses the session", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fetchMock
+      .mockResolvedValueOnce(json({ documents: [CV] }))
+      .mockResolvedValueOnce(
+        json({ error: { code: "invalid_session", message: "authentication required." } }, 401),
+      );
+    const user = userEvent.setup();
+    render(<DocumentManager />);
+
+    await screen.findByRole("heading", { name: "ada-cv.pdf" });
+    await user.click(screen.getByRole("button", { name: "Delete ada-cv.pdf" }));
+
+    expect(await screen.findByRole("heading", { name: "You are not signed in" })).toBeVisible();
+  });
+
+  it("cannot submit natively before hydration", () => {
+    // The upload form appears only after the document list resolves, so the
+    // server output is the loading shell: nothing to submit before hydration.
+    const html = renderToString(<DocumentManager />);
+
+    expect(html).toContain("Loading your documents");
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain("<button");
+    expect(html).not.toMatch(/method="get"/i);
   });
 });

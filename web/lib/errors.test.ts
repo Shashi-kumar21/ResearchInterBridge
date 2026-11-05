@@ -63,7 +63,8 @@ describe("describeApiError", () => {
 
   it("explains the content API codes in student terms", () => {
     expect(describeApiError(apiError("profile_missing", 404))).toMatch(/profile/i);
-    expect(describeApiError(apiError("document_too_large", 413))).toMatch(/10 MB/);
+    // No hardcoded size: the limit lives in `documents.MAX_DOCUMENT_BYTES`.
+    expect(describeApiError(apiError("document_too_large", 413))).toMatch(/upload limit/);
     expect(describeApiError(apiError("unsupported_document", 415))).toMatch(/PDF, DOCX or TXT/);
     expect(describeApiError(apiError("document_unreadable", 422))).toMatch(/OCR/);
     expect(describeApiError(apiError("deletion_incomplete", 409))).toMatch(/in use/);

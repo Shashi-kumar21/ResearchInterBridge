@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ProfileForm } from "./profile-form";
@@ -201,5 +202,17 @@ describe("ProfileForm", () => {
     await user.click(screen.getByRole("button", { name: "Try again" }));
 
     expect(await screen.findByLabelText("Full name")).toHaveValue("Ada Lovelace");
+  });
+
+  it("cannot submit natively before hydration", () => {
+    // Unlike the account forms, this screen renders its form only after the
+    // profile request resolves, so the server output is the loading shell: there
+    // is no form or submit button to fall through to a native GET.
+    const html = renderToString(<ProfileForm />);
+
+    expect(html).toContain("Loading your profile");
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain("<button");
+    expect(html).not.toMatch(/method="get"/i);
   });
 });

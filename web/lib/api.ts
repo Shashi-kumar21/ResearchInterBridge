@@ -348,6 +348,8 @@ export interface FactCandidate {
   readonly field: string;
   readonly value: string;
   readonly source: string;
+  /** Display name of the source document; `null` once that document is deleted. */
+  readonly source_name: string | null;
   readonly status: string;
   readonly confidence: number | null;
 }

@@ -444,6 +444,35 @@ def test_delete_removes_the_row_and_the_file(client: TestClient, settings: Setti
     assert client.delete(f"/api/documents/{uploaded['id']}").status_code == 404
 
 
+def test_deleting_a_document_removes_its_unconfirmed_facts(client: TestClient) -> None:
+    assert register(client).status_code == 201
+    assert client.put("/api/profile", json=profile_body()).status_code == 200
+    parsed = upload_and_parse(client)
+    document_id = parsed["document"]["id"]
+
+    groups = {group["field"]: group for group in client.get("/api/facts").json()["groups"]}
+    gpa_fact = groups["gpa"]["pending"][0]
+    phone_fact = groups["phone"]["pending"][0]
+    # The screen shows the file name, never the internal `document:1` source id.
+    assert gpa_fact["source_name"] == "cv.txt"
+    confirmed = client.patch(f"/api/facts/{phone_fact['id']}", json={"status": "confirmed"})
+    assert confirmed.status_code == 200
+
+    assert client.delete(f"/api/documents/{document_id}").status_code == 204
+
+    after = {group["field"]: group for group in client.get("/api/facts").json()["groups"]}
+    # Pending candidates were text from the deleted file: gone, and no longer
+    # confirmable through a stale id.
+    assert "gpa" not in after
+    missing = client.patch(f"/api/facts/{gpa_fact['id']}", json={"status": "confirmed"})
+    assert missing.status_code == 404
+    assert error_code(missing) == "fact_missing"
+    # A fact the student confirmed is profile data and survives the deletion,
+    # with no name left to point at.
+    assert [candidate["value"] for candidate in after["phone"]["confirmed"]] == ["+91 98765 43210"]
+    assert after["phone"]["confirmed"][0]["source_name"] is None
+
+
 def test_a_locked_file_keeps_the_document_and_can_be_retried(
     client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:

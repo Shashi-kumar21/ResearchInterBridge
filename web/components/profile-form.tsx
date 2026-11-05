@@ -542,6 +542,10 @@ export function ProfileForm() {
 
       <fieldset className="form-section">
         <legend>Research fit</legend>
+        <p className="hint">
+          Lists are comma-separated, and one item cannot contain a comma: the next save would
+          split it in two.
+        </p>
         <ListField
           id="profile-coursework"
           label="Relevant coursework"

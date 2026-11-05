@@ -45,7 +45,9 @@ export function describeApiError(error: unknown): string {
     case "invalid_profile":
       return error.message;
     case "document_too_large":
-      return "That file is larger than the 10 MB limit. Compress it or upload a smaller version.";
+      // No number here on purpose: the limit lives in `documents.MAX_DOCUMENT_BYTES`,
+      // and a hardcoded size in this file would drift from it.
+      return "That file is larger than the upload limit. Compress it, or upload a smaller version.";
     case "unsupported_document":
       return "Upload a PDF, DOCX or TXT file. Other formats are not accepted.";
     case "document_unreadable":

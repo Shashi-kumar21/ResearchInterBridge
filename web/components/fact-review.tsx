@@ -51,6 +51,19 @@ function confidenceText(confidence: number | null): string {
   return `${Math.round(confidence * 100)}% confidence`;
 }
 
+/**
+ * Name the file a candidate came from.
+ *
+ * `source` is an internal `document:3` id and is never shown. The API also sends
+ * the display name; when it is absent the document has been deleted and the
+ * fact is one the student had already confirmed.
+ */
+function sourceLabel(candidate: FactCandidate): string {
+  return candidate.source_name
+    ? `From ${candidate.source_name}`
+    : "From a document you deleted";
+}
+
 interface PendingFactProps {
   readonly candidate: FactCandidate;
   readonly busy: boolean;
@@ -66,7 +79,7 @@ function PendingFact({ candidate, busy, onConfirm, onReject }: PendingFactProps)
       <div>
         <p className="fact-value">{candidate.value}</p>
         <p className="hint">
-          From {candidate.source} · {confidenceText(candidate.confidence)}
+          {sourceLabel(candidate)} · {confidenceText(candidate.confidence)}
         </p>
         <div className="field fact-correction">
           {/* The visible label is the same on every row, so the input's
@@ -102,6 +115,102 @@ function PendingFact({ candidate, busy, onConfirm, onReject }: PendingFactProps)
         >
           Reject
         </button>
+      </div>
+    </li>
+  );
+}
+
+interface ConfirmedFactProps {
+  readonly candidate: FactCandidate;
+  readonly busy: boolean;
+  readonly onCorrect: (factId: number, correctedValue: string) => void;
+}
+
+/**
+ * A confirmed fact, with a correction path.
+ *
+ * The server refuses to reject a confirmed fact, so without this the only way to
+ * fix a wrong confirmed value would be a competing candidate, which does not
+ * exist when one document proposed it. A correction re-confirms the same row
+ * with a new value and is applied to the profile on the next apply.
+ */
+function ConfirmedFact({ candidate, busy, onCorrect }: ConfirmedFactProps) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(candidate.value);
+  const inputId = `fact-${candidate.id}-edit`;
+
+  function save(): void {
+    const next = value.trim();
+    if (next === "") {
+      return;
+    }
+    setEditing(false);
+    if (next === candidate.value) {
+      // Nothing to send: re-confirming the same value would look like a change.
+      return;
+    }
+    onCorrect(candidate.id, next);
+  }
+
+  return (
+    <li>
+      <div>
+        <p className="fact-value">{candidate.value}</p>
+        <p className="hint">
+          {sourceLabel(candidate)} · {confidenceText(candidate.confidence)}
+        </p>
+        {editing ? (
+          <div className="field fact-correction">
+            <label htmlFor={inputId}>Corrected value</label>
+            <input
+              id={inputId}
+              name={inputId}
+              value={value}
+              aria-label={`Corrected value for ${candidate.value}`}
+              onChange={(event) => setValue(event.target.value)}
+            />
+          </div>
+        ) : null}
+      </div>
+      <div className="button-row fact-actions">
+        {editing ? (
+          <>
+            <button
+              type="button"
+              className="button"
+              disabled={busy || value.trim() === ""}
+              aria-label={`Save correction to ${candidate.value}`}
+              onClick={save}
+            >
+              Save correction
+            </button>
+            <button
+              type="button"
+              className="button button-quiet"
+              disabled={busy}
+              aria-label={`Cancel correction to ${candidate.value}`}
+              onClick={() => {
+                setValue(candidate.value);
+                setEditing(false);
+              }}
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="granted">Confirmed</span>
+            <button
+              type="button"
+              className="button button-quiet"
+              disabled={busy}
+              aria-label={`Correct ${candidate.value}`}
+              onClick={() => setEditing(true)}
+            >
+              Correct
+            </button>
+          </>
+        )}
       </div>
     </li>
   );
@@ -184,10 +293,12 @@ export function FactReview() {
       });
       await refreshFacts();
       setNotice(
-        result.already_set
-          ? "That fact was already confirmed."
-          : correctedValue.trim()
-            ? "Fact confirmed with your correction. Rejected competing values are hidden."
+        correctedValue.trim()
+          ? result.already_set
+            ? "Fact corrected. The new value replaced the one you had confirmed."
+            : "Fact confirmed with your correction. Competing values are hidden."
+          : result.already_set
+            ? "That fact was already confirmed."
             : "Fact confirmed. It may now appear in a draft.",
       );
     } catch (failure) {
@@ -258,7 +369,6 @@ export function FactReview() {
     return <RetryPanel message={error ?? "Your facts could not be loaded."} onRetry={retry} />;
   }
 
-  const confirmedCount = groups.reduce((total, group) => total + group.confirmed.length, 0);
   const confirmedApplicable = groups.some(
     (group) => group.confirmed.length > 0 && APPLICABLE_FIELDS.has(group.field),
   );
@@ -311,20 +421,17 @@ export function FactReview() {
                   <h3>Confirmed</h3>
                   <ul className="status-list" role="list">
                     {group.confirmed.map((candidate) => (
-                      <li key={candidate.id}>
-                        <div>
-                          <p className="fact-value">{candidate.value}</p>
-                          <p className="hint">
-                            From {candidate.source} · {confidenceText(candidate.confidence)}
-                          </p>
-                        </div>
-                        <span className="granted">Confirmed</span>
-                      </li>
+                      <ConfirmedFact
+                        key={`${candidate.id}:${candidate.value}`}
+                        candidate={candidate}
+                        busy={busyId !== null}
+                        onCorrect={onConfirm}
+                      />
                     ))}
                   </ul>
                   <p className="hint">
-                    A confirmed fact cannot be unconfirmed. Confirm a different candidate to
-                    replace it.
+                    A confirmed fact cannot be rejected, but it can be corrected: “Correct” saves a
+                    new value in place. A document you delete keeps the facts you confirmed.
                   </p>
                 </div>
               ) : null}
@@ -379,7 +486,7 @@ export function FactReview() {
           <button
             type="button"
             className="button"
-            disabled={applying || confirmedCount === 0}
+            disabled={applying || !confirmedApplicable}
             onClick={onApply}
           >
             {applying ? "Applying…" : "Apply confirmed facts to profile"}

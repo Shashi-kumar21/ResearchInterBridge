@@ -358,8 +358,9 @@ support, and `web/lib/errors.ts` gains the content codes from ADR-014.
 * Confirming a fact can reject several competing rows in one transaction. The
   screen therefore refreshes the whole fact list after each decision instead of
   patching one row in local state. A confirmed fact has no "unconfirm" button
-  because the server forbids rejecting it; the student confirms a different
-  candidate to replace it.
+  because the server forbids rejecting it, but it has a "Correct" action that
+  re-confirms the row with a new value, so a wrong value does not require a
+  competing candidate (or the CLI) to fix.
 * Applying facts is explicit about `overwrite`. The default fills blank profile
   fields only; a typed value is kept unless the student ticks the overwrite
   checkbox. A missing profile still answers `404 profile_missing`, and the page
@@ -379,7 +380,14 @@ support, and `web/lib/errors.ts` gains the content codes from ADR-014.
 * The fact screen's "applicable fields" list mirrors `facts.APPLICABLE_FIELDS`
   for its hint. The API remains the authority: a mismatch changes which guidance
   is shown, not what is applied.
-* The frontend suite grows from 61 to 100 tests. The new coverage is the client
+* A fact carries the display name of its source document (`source_name`, `null`
+  when that document was deleted), so the screen never prints an internal
+  `document:3` id. Deleting a document removes its non-confirmed facts in the
+  same transaction and keeps confirmed ones, which matches what the delete
+  confirmation promises; the audit event records the count.
+* The frontend suite grows from 61 to 109 tests. The new coverage is the client
   request shapes (including multipart), content error copy, byte/date formatting,
-  profile new/existing/save/retry, document upload/parse/delete and locked-file
-  failure, conflict display, confirm/reject/correct, and apply with overwrite.
+  profile new/existing/save/retry, document upload/deduped re-upload/parse/delete
+  and locked-file failure, conflict display, confirm/reject/correct of a pending
+  fact and of a confirmed one, apply with overwrite and its applicable-field
+  gating, source labels, and a `401` arriving during an action.

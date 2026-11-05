@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import consent, db
+from . import consent, db, facts
 from .errors import (
     ConsentError,
     DocumentError,
@@ -576,12 +576,19 @@ def delete_document(
     data_directory: Path | str,
     actor: str,
 ) -> bool:
-    """Delete one document (file + row). Returns ``False`` when it does not exist.
+    """Delete one document (file, row and its unconfirmed facts).
 
-    The file goes first: removing the row and then failing to unlink would leave
-    bytes that account deletion (which walks rows) could never find again. When
-    the file is locked, :class:`DocumentPurgeError` propagates and the row stays,
-    so the student can close the program and retry.
+    Returns ``False`` when the document does not exist. The file goes first:
+    removing the row and then failing to unlink would leave bytes that account
+    deletion (which walks rows) could never find again. When the file is locked,
+    :class:`DocumentPurgeError` propagates and the row stays, so the student can
+    close the program and retry.
+
+    Facts extracted from this document that the student has not confirmed are
+    removed in the same transaction: they are text derived from a file the
+    student asked to delete, and a pending one could otherwise still be
+    confirmed after the source was gone. Confirmed facts are profile data the
+    student approved and are kept.
     """
 
     record = connection.execute(
@@ -601,6 +608,9 @@ def delete_document(
         ) from exc
 
     with db.transaction(connection):
+        removed_facts = facts.discard_unconfirmed_for_document(
+            connection, user_id=user_id, document_id=document_id
+        )
         connection.execute(
             "DELETE FROM student_documents WHERE id = ? AND user_id = ?", (document_id, user_id)
         )
@@ -611,6 +621,7 @@ def delete_document(
             outcome="success",
             target_type="student_document",
             target_id=str(document_id),
+            metadata={"facts_removed": removed_facts},
         )
     return True
 
