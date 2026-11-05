@@ -3,13 +3,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   API_BASE_URL,
   ApiError,
+  applyFacts,
+  deleteDocument,
   fetchConsentCatalogue,
+  fetchProfile,
   grantConsent,
+  listDocuments,
+  listFacts,
   loginAccount,
+  parseDocument,
   parseRetryAfter,
   registerAccount,
   resolveApiBaseUrl,
+  saveProfile,
   signOut,
+  updateFact,
+  uploadDocument,
+  type ProfileInput,
 } from "./api";
 
 const fetchMock = vi.fn();
@@ -147,6 +157,190 @@ describe("responses that are not the API envelope", () => {
     expect(failure).toBeInstanceOf(ApiError);
     expect(failure).toMatchObject({ status: 0, code: "network_error" });
     expect(String((failure as ApiError).message)).toMatch(/backend is running/i);
+  });
+});
+
+const PROFILE_INPUT: ProfileInput = {
+  full_name: "Ada Lovelace",
+  contact_email: "ada@example.edu",
+  preferred_name: null,
+  phone: null,
+  institution: "Example University",
+  department: null,
+  country: null,
+  degree_type: "bs",
+  current_year: 3,
+  expected_graduation: "2027-06-30",
+  gpa: 3.8,
+  gpa_scale: 4,
+  coursework: ["Algorithms"],
+  skills: ["Python"],
+  research_keywords: ["graph theory"],
+  target_countries: ["Germany"],
+  internship_start: null,
+  internship_end: null,
+  funding_required: true,
+};
+
+describe("profile client", () => {
+  it("reads the profile without a body", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ...PROFILE_INPUT, user_id: 1, completeness_percent: 80 }),
+    );
+
+    await fetchProfile();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${API_BASE_URL}/api/profile`);
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
+    expect(init.credentials).toBe("include");
+  });
+
+  it("replaces the profile with PUT and keeps every field", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ...PROFILE_INPUT, user_id: 1, completeness_percent: 80 }),
+    );
+
+    await saveProfile(PROFILE_INPUT);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${API_BASE_URL}/api/profile`);
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(String(init.body))).toEqual(PROFILE_INPUT);
+  });
+
+  it("keeps profile_missing distinguishable from a transport failure", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { error: { code: "profile_missing", message: "profile not found." } },
+        { status: 404 },
+      ),
+    );
+
+    await expect(fetchProfile()).rejects.toMatchObject({
+      status: 404,
+      code: "profile_missing",
+    });
+  });
+});
+
+describe("document client", () => {
+  it("lists documents", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ documents: [] }));
+
+    await listDocuments();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${API_BASE_URL}/api/documents`);
+    expect(init.method).toBe("GET");
+  });
+
+  it("uploads multipart form data without a JSON content type", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ id: 1, display_name: "cv.pdf" }, { status: 201 }));
+    const file = new File(["%PDF-1.4"], "cv.pdf", { type: "application/pdf" });
+
+    await uploadDocument(file, "cv");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${API_BASE_URL}/api/documents`);
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeInstanceOf(FormData);
+    const form = init.body as FormData;
+    expect(form.get("kind")).toBe("cv");
+    const uploaded = form.get("file");
+    expect(uploaded).toBeInstanceOf(File);
+    expect((uploaded as File).name).toBe("cv.pdf");
+    // The browser must set the multipart boundary itself.
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBeUndefined();
+  });
+
+  it("parses and deletes by id", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ document: { id: 4 }, character_count: 12, fact_count: 2 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await parseDocument(4);
+    await expect(deleteDocument(4)).resolves.toBeUndefined();
+
+    const [parseUrl, parseInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [deleteUrl, deleteInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(parseUrl).toBe(`${API_BASE_URL}/api/documents/4/parse`);
+    expect(parseInit.method).toBe("POST");
+    expect(parseInit.body).toBeUndefined();
+    expect(deleteUrl).toBe(`${API_BASE_URL}/api/documents/4`);
+    expect(deleteInit.method).toBe("DELETE");
+  });
+
+  it("passes an upload error code through for the page copy", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { error: { code: "document_too_large", message: "too large." } },
+        { status: 413 },
+      ),
+    );
+
+    await expect(
+      uploadDocument(new File(["x"], "big.pdf"), "cv"),
+    ).rejects.toMatchObject({ status: 413, code: "document_too_large" });
+  });
+});
+
+describe("fact client", () => {
+  it("reads groups", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ groups: [] }));
+
+    await listFacts();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${API_BASE_URL}/api/facts`);
+    expect(init.method).toBe("GET");
+  });
+
+  it("patches a confirmation with an optional correction", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ fact_id: 3, status: "confirmed", already_set: false }),
+    );
+
+    await updateFact(3, { status: "confirmed", correctedValue: "  3.9  " });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${API_BASE_URL}/api/facts/3`);
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toEqual({
+      status: "confirmed",
+      corrected_value: "3.9",
+    });
+  });
+
+  it("omits corrected_value when rejecting or when the field is blank", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ fact_id: 3, status: "rejected", already_set: false }))
+      .mockResolvedValueOnce(jsonResponse({ fact_id: 4, status: "confirmed", already_set: false }));
+
+    await updateFact(3, { status: "rejected", correctedValue: "ignored" });
+    await updateFact(4, { status: "confirmed", correctedValue: "   " });
+
+    const [, rejectedInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, blankInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(rejectedInit.body))).toEqual({ status: "rejected" });
+    expect(JSON.parse(String(blankInit.body))).toEqual({ status: "confirmed" });
+  });
+
+  it("applies with explicit defaults and with overwrite", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ applied: ["gpa"] }))
+      .mockResolvedValueOnce(jsonResponse({ applied: [] }));
+
+    await applyFacts();
+    await applyFacts({ fields: ["gpa"], overwrite: true });
+
+    const [firstUrl, firstInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, secondInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(firstInit.body))).toEqual({ fields: null, overwrite: false });
+    expect(JSON.parse(String(secondInit.body))).toEqual({ fields: ["gpa"], overwrite: true });
+    expect(firstInit.method).toBe("POST");
+    expect(firstUrl).toBe(`${API_BASE_URL}/api/facts/apply`);
   });
 });
 

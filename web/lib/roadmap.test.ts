@@ -44,14 +44,16 @@ describe("capability model", () => {
     expect(sending?.status).not.toBe("available");
   });
 
-  it("marks the shipped account screens as available on the web", () => {
-    // Flipped deliberately in Phase 2d-3b: register, sign-in and consent really
-    // run on this site now. The canary is the specific card, not "any card".
+  it("marks the shipped screens as available on the web", () => {
+    // Flipped deliberately in Phase 2d-3b and extended in 2d-4b: register,
+    // sign-in, consent, onboarding, documents and fact review really run here.
+    // The canary is the specific card, not "any card".
     const shell = CAPABILITIES.find((capability) => capability.id === "web-shell");
 
     expect(shell).toBeDefined();
     expect(shell?.status).toBe("available");
     expect(shell?.surface).toBe("web");
+    expect(shell?.detail).not.toMatch(/still to come/i);
     expect(hasWebCapability()).toBe(true);
   });
 
@@ -115,9 +117,9 @@ describe("capability model", () => {
   it("keeps each available capability on the surface it really runs on", () => {
     const expected: Record<string, CapabilitySurface> = {
       account: "api",
-      profile: "cli",
-      documents: "cli",
-      facts: "cli",
+      profile: "web",
+      documents: "web",
+      facts: "web",
       "web-shell": "web",
     };
 

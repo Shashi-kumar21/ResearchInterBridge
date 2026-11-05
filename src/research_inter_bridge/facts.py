@@ -98,6 +98,31 @@ def extract_facts(text: str) -> tuple[ExtractedFact, ...]:
     return tuple(facts)
 
 
+def document_source(document_id: int) -> str:
+    """The ``source`` value recorded for facts extracted from one document."""
+
+    return f"document:{document_id}"
+
+
+def discard_unconfirmed_for_document(
+    connection: sqlite3.Connection, *, user_id: int, document_id: int
+) -> int:
+    """Delete the non-confirmed candidates that came from one document.
+
+    Called when the student deletes the document. Pending and rejected
+    candidates are text derived from a file the student asked to remove, and a
+    pending one could still be confirmed afterwards, so neither may outlive the
+    document. Confirmed facts are profile data the student explicitly approved
+    and are kept. Returns the number of rows removed.
+    """
+
+    cursor = connection.execute(
+        "DELETE FROM profile_facts WHERE user_id = ? AND source = ? AND status != 'confirmed'",
+        (user_id, document_source(document_id)),
+    )
+    return cursor.rowcount
+
+
 def store_facts(
     connection: sqlite3.Connection,
     *,
@@ -113,7 +138,7 @@ def store_facts(
     cannot resurrect the extracted value the student corrected or accepted.
     """
 
-    source = f"document:{document_id}"
+    source = document_source(document_id)
     confirmed_fields = {
         str(row["field"])
         for row in connection.execute(
@@ -163,6 +188,9 @@ class FactCandidate:
     source: str
     status: str
     confidence: float | None
+    #: The display name of the source document, or ``None`` when that document
+    #: has been deleted. ``source`` itself is an internal id and is never shown.
+    source_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +210,7 @@ class FactGroup:
         return len({candidate.value.casefold() for candidate in self.pending}) > 1
 
 
-def _row_to_candidate(row: sqlite3.Row) -> FactCandidate:
+def _row_to_candidate(row: sqlite3.Row, *, source_name: str | None = None) -> FactCandidate:
     return FactCandidate(
         id=int(row["id"]),
         field_name=row["field"],
@@ -190,6 +218,7 @@ def _row_to_candidate(row: sqlite3.Row) -> FactCandidate:
         source=row["source"],
         status=row["status"],
         confidence=row["confidence"],
+        source_name=source_name,
     )
 
 
@@ -199,18 +228,27 @@ _FACT_COLUMNS = "id, field, value, source, status, confidence"
 def fact_groups(connection: sqlite3.Connection, user_id: int) -> tuple[FactGroup, ...]:
     """Return confirmable facts grouped by field, conflicts included.
 
-    Rejected facts are excluded: they are history, not candidates.
+    Rejected facts are excluded: they are history, not candidates. Each candidate
+    also carries the display name of its source document, so a screen can say
+    "from cv.pdf" instead of an internal ``document:3`` id; the name is ``None``
+    when that document has been deleted.
     """
 
     rows = connection.execute(
-        f"SELECT {_FACT_COLUMNS} FROM profile_facts "  # noqa: S608
-        "WHERE user_id = ? AND status != 'rejected' ORDER BY field, id",
+        "SELECT f.id, f.field, f.value, f.source, f.status, f.confidence, "
+        "d.display_name AS source_name "
+        "FROM profile_facts AS f "
+        "LEFT JOIN student_documents AS d "
+        "ON d.user_id = f.user_id AND d.id = CAST(substr(f.source, 10) AS INTEGER) "
+        "WHERE f.user_id = ? AND f.status != 'rejected' ORDER BY f.field, f.id",
         (user_id,),
     ).fetchall()
 
     buckets: dict[str, list[FactCandidate]] = {}
     for row in rows:
-        buckets.setdefault(row["field"], []).append(_row_to_candidate(row))
+        buckets.setdefault(row["field"], []).append(
+            _row_to_candidate(row, source_name=row["source_name"])
+        )
 
     groups: list[FactGroup] = []
     for field_name in sorted(buckets):

@@ -207,6 +207,7 @@ class FactOut(BaseModel):
     field: str
     value: str
     source: str
+    source_name: str | None = None
     status: str
     confidence: float | None
 

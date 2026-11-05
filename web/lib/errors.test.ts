@@ -60,4 +60,17 @@ describe("describeApiError", () => {
     expect(describeApiError(apiError("invalid_request", 422))).toMatch(/highlighted fields/);
     expect(describeApiError(new Error("boom"))).toBe("Something went wrong. Please try again.");
   });
+
+  it("explains the content API codes in student terms", () => {
+    expect(describeApiError(apiError("profile_missing", 404))).toMatch(/profile/i);
+    // No hardcoded size: the limit lives in `documents.MAX_DOCUMENT_BYTES`.
+    expect(describeApiError(apiError("document_too_large", 413))).toMatch(/upload limit/);
+    expect(describeApiError(apiError("unsupported_document", 415))).toMatch(/PDF, DOCX or TXT/);
+    expect(describeApiError(apiError("document_unreadable", 422))).toMatch(/OCR/);
+    expect(describeApiError(apiError("deletion_incomplete", 409))).toMatch(/in use/);
+  });
+
+  it("uses the server's field message for an invalid profile", () => {
+    expect(describeApiError(apiError("invalid_profile", 400))).toBe("server message");
+  });
 });

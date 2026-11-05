@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -11,7 +12,7 @@ import pymupdf
 import pytest
 from docx import Document as WordDocument
 
-from research_inter_bridge import consent, db, documents, parsing
+from research_inter_bridge import consent, db, documents, facts, parsing
 from research_inter_bridge.documents import (
     DOCX_MEDIA_TYPE,
     PDF_MEDIA_TYPE,
@@ -300,6 +301,90 @@ def test_delete_removes_row_and_file(connection: sqlite3.Connection, data_dir: P
     )
     assert not path.exists()
     assert documents.list_documents(connection, user_id) == ()
+
+
+def _seed_fact(
+    connection: sqlite3.Connection,
+    *,
+    user_id: int,
+    field: str,
+    value: str,
+    source: str,
+    status: str,
+) -> int:
+    cursor = connection.execute(
+        "INSERT INTO profile_facts "
+        "(user_id, field, value, source, status, confidence, created_at) "
+        "VALUES (?, ?, ?, ?, ?, 0.9, '2026-11-01T00:00:00Z')",
+        (user_id, field, value, source, status),
+    )
+    return int(cursor.lastrowid)
+
+
+def test_delete_removes_unconfirmed_facts_but_keeps_confirmed_ones(
+    connection: sqlite3.Connection, data_dir: Path
+) -> None:
+    """The extracted text dies with the document; an approved fact does not."""
+
+    user_id = create_user(connection)
+    record = _upload(connection, data_dir, user_id, pdf_bytes("Asha"))
+    survivor = _upload(connection, data_dir, user_id, docx_bytes("other"), name="cv.docx")
+    source = facts.document_source(record.id)
+    other_source = facts.document_source(survivor.id)
+    _seed_fact(
+        connection, user_id=user_id, field="gpa", value="8.9/10", source=source, status="pending"
+    )
+    _seed_fact(
+        connection,
+        user_id=user_id,
+        field="phone",
+        value="+91 98765 43210",
+        source=source,
+        status="rejected",
+    )
+    _seed_fact(
+        connection,
+        user_id=user_id,
+        field="contact_email",
+        value="asha@example.edu",
+        source=source,
+        status="confirmed",
+    )
+    _seed_fact(
+        connection,
+        user_id=user_id,
+        field="gpa",
+        value="9.1/10",
+        source=other_source,
+        status="pending",
+    )
+
+    assert (
+        documents.delete_document(
+            connection,
+            document_id=record.id,
+            user_id=user_id,
+            data_directory=data_dir,
+            actor="student:1",
+        )
+        is True
+    )
+
+    remaining = [
+        (row["field"], row["value"], row["status"])
+        for row in connection.execute(
+            "SELECT field, value, status FROM profile_facts WHERE user_id = ? ORDER BY field",
+            (user_id,),
+        )
+    ]
+    assert remaining == [
+        ("contact_email", "asha@example.edu", "confirmed"),
+        ("gpa", "9.1/10", "pending"),
+    ]
+    metadata = connection.execute(
+        "SELECT metadata_json FROM audit_events WHERE action = 'document.deleted'"
+    ).fetchone()["metadata_json"]
+    assert json.loads(metadata) == {"facts_removed": 2}
 
 
 def test_purge_user_documents_removes_files_and_rows(

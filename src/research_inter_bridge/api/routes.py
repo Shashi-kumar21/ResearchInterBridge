@@ -161,6 +161,7 @@ def _fact_out(candidate: facts.FactCandidate) -> FactOut:
         field=candidate.field_name,
         value=candidate.value,
         source=candidate.source,
+        source_name=candidate.source_name,
         status=candidate.status,
         confidence=candidate.confidence,
     )

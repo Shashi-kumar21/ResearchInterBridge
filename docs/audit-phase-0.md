@@ -201,8 +201,8 @@ optimization) have no predecessor.
 | 2d-3a | API hardening: per-address rate limits, bounded scrypt, purge ordering, scheme-aware origin guard | merged (PR #12) |
 | 2d-3b | Register, sign-in and consent screens wired to the JSON API | merged (PR #13, ADR-013) |
 | 2d-3c | Hydration gate on the account forms, `form-action 'none'`, SSR regression tests | merged (PR #14) |
-| 2d-4a | Content API: profile, document upload/parse/delete, fact confirm/apply | this PR (ADR-014) |
-| 2d-4b | Onboarding, profile and document screens | planned |
+| 2d-4a | Content API: profile, document upload/parse/delete, fact confirm/apply | merged (PR #15, ADR-014) |
+| 2d-4b | Onboarding/profile, document upload/list and fact-review screens | this PR (ADR-015) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -391,3 +391,76 @@ makes the existing `register`/`login` safe to expose.
   before authentication.
 * Deferred to 2d-4b: the screens that call these routes. The frontend client and
   its tests are unchanged in this slice.
+
+## 18. Phase 2d-4b notes (content screens)
+
+* Three pages and four components complete the browser side of the content API:
+  `/onboarding` (`profile-form.tsx`), `/documents` (`document-manager.tsx`) and
+  `/facts` (`fact-review.tsx`), plus shared signed-out/retry/loading panels in
+  `account-panels.tsx`. Only these six session-dependent screens are client
+  components; the pages, header and landing page stay server-rendered.
+* `web/lib/api.ts` now supports `PUT`, `PATCH` and `DELETE`, and sends a
+  `FormData` upload without a `Content-Type` header so the browser can add the
+  multipart boundary. It gained typed profile, document and fact responses and
+  keeps the stable server error code on `ApiError`.
+* `GET /api/profile` answering `404 profile_missing` is rendered as a new blank
+  form, not an error. Saving always sends a full replacement (`PUT`), including
+  `null` for cleared optional values; the server still fills `user_id`,
+  `consent_given_at` and the timestamps. The completeness percentage and missing
+  labels come from the server response.
+* The document screen uploads, lists, parses and deletes. A failed parse is
+  persisted by the server, so the list is refreshed after the error and the
+  document keeps the reason. Delete asks for confirmation and a `409
+  deletion_incomplete` (locked file) keeps the row and explains that the file is
+  in use. Deleting also removes the document's non-confirmed facts in the same
+  transaction (confirmed facts are profile data and stay), so a pending candidate
+  cannot be confirmed through a stale id after its file is gone. Identical
+  uploads still dedupe server-side; the notice uses the returned row's status, so
+  a re-uploaded file that is already parsed is not described as new.
+* The fact screen shows every pending candidate, flags a field whose documents
+  disagree, and sends confirm/reject as a `PATCH`. After one decision it reloads
+  the whole list because confirming makes that candidate the only truth for the
+  field and rejects competing rows in the same transaction. A confirmed fact has
+  no unconfirm control because the server forbids rejecting it, but it can be
+  corrected in place: "Correct" re-confirms the row with a new value. A field
+  whose source document was deleted says so, and corrections are trimmed before
+  sending. The fact API sends `source_name` (the document's display name, `null`
+  once deleted) so the screen never shows an internal `document:3` id.
+* `POST /api/facts/apply` is called with `{fields: null, overwrite}`: blank
+  profile fields are filled by default, and the overwrite checkbox is the only
+  way to replace a value the student typed. A missing profile keeps the API's
+  `profile_missing` message so the page can say to save it first.
+* Error copy for the new codes lives in `web/lib/errors.ts`:
+  `profile_missing`, `invalid_profile`, `document_too_large`,
+  `unsupported_document`, `document_unreadable`, `document_missing`,
+  `fact_missing` and `deletion_incomplete`. The `document_too_large` sentence
+  names no size, because the limit lives in `documents.MAX_DOCUMENT_BYTES` and a
+  hardcoded number would drift. A `401` on load or during an action returns to
+  the signed-out panel shared by all three screens.
+* Repeated rows carry the same visible control names ("Confirm", "Reject",
+  "Delete", "Extract facts"), which is ambiguous for a screen reader and for
+  voice control. Each row's controls therefore have an explicit accessible name
+  that includes the value or file name (`Confirm ada@example.edu`,
+  `Delete ada-cv.pdf`, `Correction for ada@example.edu (optional)`), while the
+  visible label stays short. The tests query those names, so a duplicate would
+  fail them.
+* Product copy was corrected in the same slice: the profile, documents and facts
+  cards now say they run on the website, the website card no longer says content
+  screens are "still to come", and the landing note names the new capabilities.
+  `roadmap.test.ts` asserts the new surfaces and the absence of that phrase.
+* Frontend tests: 109 total (up from 61). New: API client `PUT`/`PATCH`/`DELETE`,
+  multipart upload without a JSON content type, profile/client error codes;
+  content error copy; byte/date formatting; Testing Library tests for the profile
+  (signed out, new profile, full replacement, stored profile, server validation,
+  retry), documents (signed out, empty, upload, deduped re-upload, parse, failed
+  parse, delete, cancelled delete, locked-file failure, `401` during an action),
+  and facts (signed out, empty, conflict and correction, source labels, reject,
+  correct a confirmed fact, apply with overwrite, non-applicable gating, missing
+  profile, retry, `401` during an action).
+* The Python half of the same fix is covered by a cascade service test (pending and
+  rejected rows removed, confirmed row kept, audit count recorded) and an API test
+  (`GET /api/facts` loses the candidates, a stale `PATCH` answers `404
+  fact_missing`, `source_name` is `null` after deletion).
+* Checks run in this slice: `npm run lint`, `npm run typecheck`, `npm test`
+  (109 passed) and `npm run build` (all nine routes prerender); `ruff check`,
+  `ruff format --check`, `pytest`.
