@@ -248,6 +248,7 @@ MIGRATIONS: tuple[Migration, ...] = (
                 department_id INTEGER REFERENCES departments (id) ON DELETE SET NULL,
                 country TEXT,
                 opportunity_type TEXT,
+                degree_level TEXT,
                 research_areas_json TEXT NOT NULL DEFAULT '[]',
                 official_url TEXT NOT NULL,
                 eligibility_json TEXT NOT NULL DEFAULT '[]',

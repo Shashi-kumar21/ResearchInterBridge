@@ -482,6 +482,8 @@ makes the existing `register`/`login` safe to expose.
   `unverified`). Validation rejects bad URLs, impossible date ranges, unknown
   statuses and out-of-range confidence; it never fills a missing field. Stored
   programs therefore distinguish "not stated" (NULL) from a stated negative.
+  Degree level is stored so the discovery filter can match it offline; an
+  unstated level is NULL and never matches a stated filter.
 * Program TTLs: 14 days outside an application window, 3 days inside it, 1 day
   within a week of the closing date (or after it), so a closed status cannot be
   served from an old entry for long.
@@ -492,8 +494,8 @@ makes the existing `register`/`login` safe to expose.
   configured yet, so an online query with an empty cache exits 1 with an
   actionable message instead of pretending to search. The polite-pool contact
   email is needed for the next slice (4b), not this one.
-* Tests: 37 new (`tests/test_research_cache.py`, `tests/test_discovery.py`)
+* Tests: 39 new (`tests/test_research_cache.py`, `tests/test_discovery.py`)
   covering key/TTL boundaries, validation, provenance, zero-call cache hits,
   refresh-in-place, stale fallback after a failure, empty-result caching,
-  offline browsing, batched whole-cache reads, cross-connection reuse and the
-  CLI paths. Full suite: 496 passed, 2 skipped.
+  offline browsing and filtering, batched whole-cache reads, cross-connection
+  reuse and the CLI paths. Full suite: 498 passed, 2 skipped.

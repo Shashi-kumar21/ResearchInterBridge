@@ -311,6 +311,7 @@ def _program_payload(program: discovery.Program) -> dict[str, object]:
         "department": program.department,
         "country": program.country,
         "opportunity_type": program.opportunity_type,
+        "degree_level": program.degree_level,
         "research_areas": list(program.research_areas),
         "official_url": program.official_url,
         "evidence_urls": list(program.evidence_urls),

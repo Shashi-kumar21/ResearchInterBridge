@@ -29,6 +29,7 @@ def make_program(**overrides: object) -> discovery.DiscoveredProgram:
         "institution": "Technical University of Munich",
         "country": "Germany",
         "department": "Physics",
+        "degree_level": "master",
         "official_url": OFFICIAL_URL,
         "research_areas": ("machine learning", "physics"),
         "closing_date": "2027-01-15",
@@ -107,6 +108,7 @@ def test_unknown_values_stay_unknown() -> None:
             opening_date=None,
             stipend=None,
             tuition=None,
+            degree_level=None,
             eligibility=(),
             confidence=None,
         )
@@ -115,6 +117,7 @@ def test_unknown_values_stay_unknown() -> None:
     assert cleaned.status == "unverified"
     assert cleaned.closing_date is None
     assert cleaned.stipend is None
+    assert cleaned.degree_level is None
     assert cleaned.eligibility == ()
     assert cleaned.confidence is None
 
@@ -140,6 +143,7 @@ def test_first_search_stores_the_program_with_provenance(connection: sqlite3.Con
     assert program.name == record.name
     assert program.institution == record.institution
     assert program.department == "Physics"
+    assert program.degree_level == "master"
     assert program.status == "upcoming"
     assert program.stale is False
     assert program.last_checked_at == cache.to_timestamp(NOW)
@@ -326,6 +330,66 @@ def test_offline_browsing_lists_the_whole_cache(connection: sqlite3.Connection) 
     result = discovery.search_programs(connection, discovery.ProgramQuery(), offline=True, now=NOW)
 
     assert [program.name for program in result.programs] == ["MSc Research Internship"]
+
+
+def test_offline_browsing_filters_the_cache_without_an_index_entry(
+    connection: sqlite3.Connection,
+) -> None:
+    discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(research_area="science"),
+        adapter=FakeAdapter(
+            records=(
+                make_program(),
+                make_program(
+                    name="BSc Data Science",
+                    institution="Delft University of Technology",
+                    country="Netherlands",
+                    department="Computer Science",
+                    degree_level="bachelor",
+                    research_areas=("data science",),
+                    official_url="https://www.tudelft.nl/bsc/data-science",
+                ),
+            )
+        ),
+        now=NOW,
+    )
+
+    # A filter that was never sent to a source still browses the cache offline.
+    germany = discovery.search_programs(
+        connection, discovery.ProgramQuery(country="Germany"), offline=True, now=NOW
+    )
+    bachelors = discovery.search_programs(
+        connection, discovery.ProgramQuery(degree_level="bachelor"), offline=True, now=NOW
+    )
+    physics = discovery.search_programs(
+        connection, discovery.ProgramQuery(department="physics"), offline=True, now=NOW
+    )
+
+    assert [program.name for program in germany.programs] == ["MSc Research Internship"]
+    assert [program.name for program in bachelors.programs] == ["BSc Data Science"]
+    assert [program.name for program in physics.programs] == ["MSc Research Internship"]
+    assert germany.served_from_cache and not germany.stale
+
+
+def test_offline_filtering_treats_unknown_as_unknown(connection: sqlite3.Connection) -> None:
+    discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(country="Germany"),
+        adapter=FakeAdapter(records=(make_program(degree_level=None),)),
+        now=NOW,
+    )
+
+    unknown = discovery.search_programs(
+        connection, discovery.ProgramQuery(degree_level="master"), offline=True, now=NOW
+    )
+    unfiltered = discovery.search_programs(
+        connection, discovery.ProgramQuery(), offline=True, now=NOW
+    )
+
+    assert unknown.programs == ()
+    assert len(unfiltered.programs) == 1
+    assert unfiltered.programs[0].degree_level is None
 
 
 def test_browsing_a_large_cache_is_batched_and_sorted(connection: sqlite3.Connection) -> None:

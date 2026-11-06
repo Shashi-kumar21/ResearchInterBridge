@@ -130,6 +130,7 @@ class DiscoveredProgram:
     country: str | None = None
     department: str | None = None
     opportunity_type: str | None = None
+    degree_level: str | None = None
     research_areas: tuple[str, ...] = ()
     eligibility: tuple[str, ...] = ()
     application_method: str | None = None
@@ -159,6 +160,7 @@ class Program:
     department: str | None
     country: str | None
     opportunity_type: str | None
+    degree_level: str | None
     research_areas: tuple[str, ...]
     official_url: str
     evidence_urls: tuple[str, ...]
@@ -263,6 +265,7 @@ def validate_program(record: DiscoveredProgram) -> DiscoveredProgram:
         country=_optional_text(record.country, "country", 200),
         department=_optional_text(record.department, "department", MAX_NAME_LENGTH),
         opportunity_type=_optional_text(record.opportunity_type, "opportunity_type", 100),
+        degree_level=_optional_text(record.degree_level, "degree_level", 100),
         research_areas=_text_tuple(record.research_areas, "research_areas"),
         eligibility=_text_tuple(record.eligibility, "eligibility"),
         application_method=_optional_text(
@@ -394,10 +397,11 @@ def search_programs(
     normalised = query.normalised()
     fingerprint = normalised.fingerprint()
     cached_ids, empty_until = _index_entry(connection, fingerprint)
-    if not cached_ids and offline and normalised.is_empty():
-        # Offline browsing of the whole cache; a filtered query without an index
-        # entry stays empty rather than pretending a filter was applied.
-        cached_ids = _all_program_ids(connection)
+    if offline and not cached_ids:
+        # Offline browsing filters the local cache directly, so a filter works
+        # even when that exact query was never sent to a source. Unknown values
+        # never match a stated filter (an unstated country is not "Germany").
+        cached_ids = _offline_program_ids(connection, normalised)
     if (
         not cached_ids
         and empty_until is not None
@@ -588,17 +592,19 @@ def _store_program(
         """
         INSERT INTO programs (
             canonical_key, name, institution_id, department_id, country,
-            opportunity_type, research_areas_json, official_url, eligibility_json,
-            application_method, opening_date, closing_date, start_date, duration_text,
-            stipend_text, tuition_text, accommodation_text, required_documents_json,
-            status, confidence, last_checked_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            opportunity_type, degree_level, research_areas_json, official_url,
+            eligibility_json, application_method, opening_date, closing_date,
+            start_date, duration_text, stipend_text, tuition_text, accommodation_text,
+            required_documents_json, status, confidence, last_checked_at, created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(canonical_key) DO UPDATE SET
             name = excluded.name,
             institution_id = excluded.institution_id,
             department_id = excluded.department_id,
             country = excluded.country,
             opportunity_type = excluded.opportunity_type,
+            degree_level = excluded.degree_level,
             research_areas_json = excluded.research_areas_json,
             official_url = excluded.official_url,
             eligibility_json = excluded.eligibility_json,
@@ -624,6 +630,7 @@ def _store_program(
             department_id,
             record.country,
             record.opportunity_type,
+            record.degree_level,
             json.dumps(record.research_areas, ensure_ascii=False),
             record.official_url,
             json.dumps(record.eligibility, ensure_ascii=False),
@@ -863,6 +870,56 @@ def _all_program_ids(connection: sqlite3.Connection) -> tuple[int, ...]:
     return tuple(int(row["id"]) for row in rows)
 
 
+def _offline_program_ids(connection: sqlite3.Connection, query: ProgramQuery) -> tuple[int, ...]:
+    """Match a normalised query against the cache, without any source.
+
+    Country and degree level are equality matches; department and research area
+    accept a substring so "Physics" finds "Department of Physics". A NULL field
+    never matches a stated filter: unknown is not the same as a confirmed value.
+    """
+
+    if query.is_empty():
+        return _all_program_ids(connection)
+    rows = connection.execute(
+        """
+        SELECT p.id, p.country, p.degree_level, p.research_areas_json,
+               i.name AS institution_name, d.name AS department_name
+        FROM programs AS p
+        LEFT JOIN institutions AS i ON i.id = p.institution_id
+        LEFT JOIN departments AS d ON d.id = p.department_id
+        ORDER BY p.name, p.id
+        """
+    ).fetchall()
+    matches: list[int] = []
+    for row in rows:
+        if query.country is not None and not _same_text(row["country"], query.country):
+            continue
+        if query.department is not None and not (
+            _contains_text(row["department_name"], query.department)
+            or _contains_text(row["institution_name"], query.department)
+        ):
+            continue
+        if query.degree_level is not None and not _same_text(
+            row["degree_level"], query.degree_level
+        ):
+            continue
+        if query.research_area is not None and not any(
+            query.research_area in area.casefold()
+            for area in _json_tuple(row["research_areas_json"])
+        ):
+            continue
+        matches.append(int(row["id"]))
+    return tuple(matches)
+
+
+def _same_text(value: Any, wanted: str) -> bool:
+    return value is not None and cache.normalise_text(str(value)) == wanted
+
+
+def _contains_text(value: Any, wanted: str) -> bool:
+    return value is not None and wanted in cache.normalise_text(str(value))
+
+
 def _batches(ids: Sequence[int]) -> tuple[tuple[int, ...], ...]:
     """Split ids into unique, ordered batches safe for one SQL statement."""
 
@@ -923,6 +980,7 @@ def _load_programs(
                 department=_row_text(row["department_name"]),
                 country=_row_text(row["country"]),
                 opportunity_type=_row_text(row["opportunity_type"]),
+                degree_level=_row_text(row["degree_level"]),
                 research_areas=_json_tuple(row["research_areas_json"]),
                 official_url=str(row["official_url"]),
                 evidence_urls=tuple(sources.get(program_id, ())),
@@ -974,6 +1032,7 @@ def record_payload(record: DiscoveredProgram) -> dict[str, Any]:
         "country": record.country,
         "department": record.department,
         "opportunity_type": record.opportunity_type,
+        "degree_level": record.degree_level,
         "research_areas": list(record.research_areas),
         "eligibility": list(record.eligibility),
         "application_method": record.application_method,

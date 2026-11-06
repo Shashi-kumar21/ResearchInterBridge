@@ -411,8 +411,10 @@ source.
   version, payload pointer, last attempt/error). `discovery` owns query
   normalisation, validation, storage and the refresh decision.
 * A `ProgramAdapter` is injected; this slice ships none. `discover --offline`
-  browses the cache, and an online query without an adapter fails with an
-  actionable `DiscoveryUnavailableError` instead of pretending to search.
+  browses the cache and applies its filters to the local rows, so a filter works
+  even when that exact query never reached a source. An online query without an
+  adapter fails with an actionable `DiscoveryUnavailableError` instead of
+  pretending to search.
 * `DiscoveredProgram` defaults to unknown (`None`, empty, `unverified`). The
   validator rejects malformed records (bad URL, impossible date range, unknown
   status, out-of-range confidence) and never fills a gap. A record is stored with
