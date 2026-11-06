@@ -492,8 +492,8 @@ makes the existing `register`/`login` safe to expose.
   configured yet, so an online query with an empty cache exits 1 with an
   actionable message instead of pretending to search. The polite-pool contact
   email is needed for the next slice (4b), not this one.
-* Tests: 36 new (`tests/test_research_cache.py`, `tests/test_discovery.py`)
+* Tests: 37 new (`tests/test_research_cache.py`, `tests/test_discovery.py`)
   covering key/TTL boundaries, validation, provenance, zero-call cache hits,
   refresh-in-place, stale fallback after a failure, empty-result caching,
-  offline browsing, cross-connection reuse and the CLI paths. Full suite: 494
-  passed, 2 skipped.
+  offline browsing, batched whole-cache reads, cross-connection reuse and the
+  CLI paths. Full suite: 496 passed, 2 skipped.
