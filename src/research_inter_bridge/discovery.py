@@ -45,6 +45,10 @@ MAX_ITEMS = 50
 #: source every time. Non-empty result sets follow their program TTLs.
 EMPTY_RESULT_TTL_DAYS = 1
 
+#: SQLite limits the number of bound parameters per statement. Reads are split
+#: into batches of this size so browsing the whole cache stays safe.
+READ_BATCH_SIZE = 500
+
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -856,32 +860,52 @@ def _all_program_ids(connection: sqlite3.Connection) -> tuple[int, ...]:
     return tuple(int(row["id"]) for row in rows)
 
 
+def _batches(ids: Sequence[int]) -> tuple[tuple[int, ...], ...]:
+    """Split ids into unique, ordered batches safe for one SQL statement."""
+
+    unique = tuple(dict.fromkeys(ids))
+    return tuple(
+        unique[start : start + READ_BATCH_SIZE] for start in range(0, len(unique), READ_BATCH_SIZE)
+    )
+
+
 def _load_programs(
     connection: sqlite3.Connection, ids: Sequence[int], *, now: datetime
 ) -> tuple[Program, ...]:
     if not ids:
         return ()
-    placeholders = ", ".join("?" for _ in ids)
-    rows = connection.execute(
-        f"""
-        SELECT p.*, i.name AS institution_name, d.name AS department_name
-        FROM programs AS p
-        LEFT JOIN institutions AS i ON i.id = p.institution_id
-        LEFT JOIN departments AS d ON d.id = p.department_id
-        WHERE p.id IN ({placeholders})
-        ORDER BY p.name, p.id
-        """,  # noqa: S608 - placeholders are generated, ids are bound
-        tuple(ids),
-    ).fetchall()
+    # Offline browsing asks for every program, and SQLite caps the number of
+    # bound parameters per statement, so reads are batched.
+    batches = _batches(ids)
+    rows: list[sqlite3.Row] = []
     sources: dict[int, list[str]] = {}
-    for row in connection.execute(
-        f"SELECT program_id, url FROM program_sources WHERE program_id IN ({placeholders}) "
-        "ORDER BY id",  # noqa: S608
-        tuple(ids),
-    ):
-        sources.setdefault(int(row["program_id"]), []).append(str(row["url"]))
+    entries: dict[int, tuple[cache.CacheEntry, ...]] = {}
+    for batch in batches:
+        placeholders = ", ".join("?" for _ in batch)
+        rows.extend(
+            connection.execute(
+                f"""
+                SELECT p.*, i.name AS institution_name, d.name AS department_name
+                FROM programs AS p
+                LEFT JOIN institutions AS i ON i.id = p.institution_id
+                LEFT JOIN departments AS d ON d.id = p.department_id
+                WHERE p.id IN ({placeholders})
+                ORDER BY p.name, p.id
+                """,  # noqa: S608 - placeholders are generated, ids are bound
+                batch,
+            ).fetchall()
+        )
+        for row in connection.execute(
+            f"SELECT program_id, url FROM program_sources WHERE program_id IN ({placeholders}) "
+            "ORDER BY id",  # noqa: S608
+            batch,
+        ):
+            sources.setdefault(int(row["program_id"]), []).append(str(row["url"]))
+        entries.update(
+            cache.entries_for_entities(connection, entity_type="program", entity_ids=batch)
+        )
+    rows.sort(key=lambda row: (str(row["name"]), int(row["id"])))
 
-    entries = cache.entries_for_entities(connection, entity_type="program", entity_ids=ids)
     programs: list[Program] = []
     for row in rows:
         program_id = int(row["id"])

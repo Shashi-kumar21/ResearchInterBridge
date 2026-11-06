@@ -328,6 +328,30 @@ def test_offline_browsing_lists_the_whole_cache(connection: sqlite3.Connection) 
     assert [program.name for program in result.programs] == ["MSc Research Internship"]
 
 
+def test_browsing_a_large_cache_is_batched_and_sorted(connection: sqlite3.Connection) -> None:
+    """A whole-cache browse must not exceed SQLite's bound-parameter limit."""
+
+    records = tuple(
+        make_program(
+            name=f"Program {index:04d}",
+            official_url=f"https://example.edu/program/{index}",
+        )
+        for index in range(discovery.READ_BATCH_SIZE + 1)
+    )
+
+    discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(country="Germany"),
+        adapter=FakeAdapter(records=records),
+        now=NOW,
+    )
+    result = discovery.search_programs(connection, discovery.ProgramQuery(), offline=True, now=NOW)
+
+    assert len(result.programs) == len(records)
+    names = [program.name for program in result.programs]
+    assert names == sorted(names)
+
+
 def test_offline_with_an_empty_cache_is_an_empty_answer_not_an_error(
     connection: sqlite3.Connection,
 ) -> None:
