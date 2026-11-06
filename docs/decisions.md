@@ -411,16 +411,20 @@ source.
   version, payload pointer, last attempt/error). `discovery` owns query
   normalisation, validation, storage and the refresh decision.
 * A `ProgramAdapter` is injected; this slice ships none. `discover --offline`
-  browses the cache and applies its filters to the local rows, so a filter works
-  even when that exact query never reached a source. An online query without an
-  adapter fails with an actionable `DiscoveryUnavailableError` instead of
-  pretending to search.
+  browses the cache and applies its filters to the local rows, indexed or not, so
+  a filter works even when that exact query never reached a source and the result
+  cannot disagree with the stored fields. An online query without an adapter
+  fails with an actionable `DiscoveryUnavailableError` instead of pretending to
+  search.
 * `DiscoveredProgram` defaults to unknown (`None`, empty, `unverified`). The
   validator rejects malformed records (bad URL, impossible date range, unknown
   status, out-of-range confidence) and never fills a gap. A record is stored with
-  exactly the values its source stated. A JSON `null` list means "no items", and
-  duplicate source URLs are collapsed because the table keeps one row per
-  program and URL.
+  exactly the values its source stated. A JSON `null` list or source list means
+  "no items", and duplicate source URLs are collapsed because the table keeps one
+  row per program and URL.
+* A program's canonical key includes its degree level: a BSc and an MSc with the
+  same name at the same department are two programs, not one colliding row. An
+  unstated level is omitted from the key.
 * A fresh query performs zero adapter calls. A non-empty result is fresh while
   each program's TTL holds; an empty result is cached for one day so repeating a
   query that found nothing does not call the source either.
@@ -432,7 +436,13 @@ source.
   verified data is worse than showing it with an honest timestamp.
 * A failed refresh is not retried for one hour (`FAILED_REFRESH_RETRY_SECONDS`).
   Without that window, every repeated query against a broken source would hit
-  it again, which §13.3 forbids.
+  it again, which §13.3 forbids. The window covers queries that have cached rows;
+  a cold query that has never succeeded is not cached as a failure yet. The live
+  adapter slice owns that negative marker, because only then can a source fail
+  without a stored result.
+* The offline department filter also matches the institution name, so
+  `--department oxford` finds Oxford programs whose department is named
+  differently. Country and degree level stay equality matches.
 * Institution and department cache entries are derived from the official program
   page for now and refreshed with it. Their own pages are added with the browse
   hierarchy (§13.2).

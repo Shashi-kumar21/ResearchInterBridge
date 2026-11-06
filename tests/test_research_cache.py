@@ -164,3 +164,35 @@ def test_cache_rejects_invalid_provenance(connection: sqlite3.Connection) -> Non
             adapter="fixture",
             parser_version="1",
         )
+
+
+def test_batch_entry_reads_stay_under_a_low_parameter_limit(
+    connection: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for entity_id in range(1, 26):
+        cache.put_entry(
+            connection,
+            entity_type="program",
+            entity_id=entity_id,
+            canonical_key=f"program:test:{entity_id}",
+            source_url="https://example.edu/program",
+            fetched_at="2026-11-05T12:00:00.000000+00:00",
+            verified_at="2026-11-05T12:00:00.000000+00:00",
+            ttl_seconds=14 * 24 * 60 * 60,
+            content_hash="a" * 64,
+            http_status=200,
+            adapter="fixture",
+            parser_version="1",
+        )
+
+    previous_limit = connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 15)
+    monkeypatch.setattr(cache, "READ_BATCH_SIZE", 10)
+    try:
+        grouped = cache.entries_for_entities(
+            connection, entity_type="program", entity_ids=range(1, 26)
+        )
+    finally:
+        connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, previous_limit)
+
+    assert sorted(grouped) == list(range(1, 26))
+    assert all(len(entries) == 1 for entries in grouped.values())

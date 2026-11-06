@@ -103,12 +103,18 @@ def test_duplicate_source_urls_are_collapsed_to_one() -> None:
 
 def test_null_lists_are_treated_as_no_items() -> None:
     cleaned = discovery.validate_program(
-        make_program(research_areas=None, eligibility=None, required_documents=None)
+        make_program(
+            research_areas=None,
+            eligibility=None,
+            required_documents=None,
+            sources=None,
+        )
     )
 
     assert cleaned.research_areas == ()
     assert cleaned.eligibility == ()
     assert cleaned.required_documents == ()
+    assert [source.url for source in cleaned.sources] == [OFFICIAL_URL]
 
 
 @pytest.mark.parametrize(
@@ -437,7 +443,7 @@ def test_offline_browsing_filters_the_cache_without_an_index_entry(
 ) -> None:
     discovery.search_programs(
         connection,
-        discovery.ProgramQuery(research_area="science"),
+        discovery.ProgramQuery(country="Germany"),
         adapter=FakeAdapter(
             records=(
                 make_program(),
@@ -455,7 +461,8 @@ def test_offline_browsing_filters_the_cache_without_an_index_entry(
         now=NOW,
     )
 
-    # A filter that was never sent to a source still browses the cache offline.
+    # Offline always filters the stored rows, even when this exact query was
+    # indexed from a source answer that also returned a non-German program.
     germany = discovery.search_programs(
         connection, discovery.ProgramQuery(country="Germany"), offline=True, now=NOW
     )
@@ -465,11 +472,31 @@ def test_offline_browsing_filters_the_cache_without_an_index_entry(
     physics = discovery.search_programs(
         connection, discovery.ProgramQuery(department="physics"), offline=True, now=NOW
     )
+    by_institution = discovery.search_programs(
+        connection, discovery.ProgramQuery(department="delft"), offline=True, now=NOW
+    )
 
     assert [program.name for program in germany.programs] == ["MSc Research Internship"]
     assert [program.name for program in bachelors.programs] == ["BSc Data Science"]
     assert [program.name for program in physics.programs] == ["MSc Research Internship"]
+    assert [program.name for program in by_institution.programs] == ["BSc Data Science"]
     assert germany.served_from_cache and not germany.stale
+
+
+def test_degree_level_is_part_of_a_program_identity(connection: sqlite3.Connection) -> None:
+    bachelor = make_program(degree_level="bachelor")
+    master = make_program(degree_level="master", official_url="https://www.tum.de/msc")
+
+    discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(country="Germany"),
+        adapter=FakeAdapter(records=(bachelor, master)),
+        now=NOW,
+    )
+
+    assert discovery.program_key(bachelor) != discovery.program_key(master)
+    count = connection.execute("SELECT COUNT(*) AS c FROM programs").fetchone()["c"]
+    assert count == 2
 
 
 def test_offline_filtering_treats_unknown_as_unknown(connection: sqlite3.Connection) -> None:

@@ -257,7 +257,7 @@ def validate_program(record: DiscoveredProgram) -> DiscoveredProgram:
             publisher=_optional_text(source.publisher, "source publisher", MAX_NAME_LENGTH),
             kind=_required_text(source.kind, "source kind", 50),
         )
-        for source in record.sources
+        for source in record.sources or ()
     )
     if not any(source.url == official_url for source in sources):
         sources = (SourceRef(url=official_url), *sources)
@@ -419,10 +419,11 @@ def search_programs(
     normalised = query.normalised()
     fingerprint = normalised.fingerprint()
     cached_ids, empty_until = _index_entry(connection, fingerprint)
-    if offline and not cached_ids:
-        # Offline browsing filters the local cache directly, so a filter works
-        # even when that exact query was never sent to a source. Unknown values
-        # never match a stated filter (an unstated country is not "Germany").
+    if offline:
+        # Offline browsing always filters the local rows, indexed or not. Using
+        # the index here would return the adapter's last answer for that exact
+        # query, which can disagree with the stored fields the student asked to
+        # filter on.
         cached_ids = _offline_program_ids(connection, normalised)
     if (
         not cached_ids
@@ -634,7 +635,12 @@ def search_programs(
 
 
 def program_key(record: DiscoveredProgram) -> str:
-    """The canonical identity of a program on an official source."""
+    """The canonical identity of a program on an official source.
+
+    Degree level is part of the identity: a BSc and an MSc with the same name at
+    the same department are two programs, not one row. An unstated level is
+    omitted, so it does not manufacture a separate key for the same record.
+    """
 
     return cache.canonical_key(
         "program",
@@ -642,6 +648,7 @@ def program_key(record: DiscoveredProgram) -> str:
         record.institution,
         record.department or "",
         record.name,
+        record.degree_level or "",
     )
 
 
@@ -946,8 +953,10 @@ def _offline_program_ids(connection: sqlite3.Connection, query: ProgramQuery) ->
     """Match a normalised query against the cache, without any source.
 
     Country and degree level are equality matches; department and research area
-    accept a substring so "Physics" finds "Department of Physics". A NULL field
-    never matches a stated filter: unknown is not the same as a confirmed value.
+    accept a substring so "Physics" finds "Department of Physics". The department
+    filter also matches the institution name, so `--department oxford` finds
+    Oxford programs whose department is named differently. A NULL field never
+    matches a stated filter: unknown is not the same as a confirmed value.
     """
 
     if query.is_empty():

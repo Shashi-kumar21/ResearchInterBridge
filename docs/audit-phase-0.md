@@ -496,16 +496,22 @@ makes the existing `register`/`login` safe to expose.
   this slice; the browse hierarchy (§13.2) will give them their own pages. An
   adapter's raw payload is referenced by path only and must stay outside Git.
 * `discover --offline` browses the cache without an adapter and applies its
-  filters locally, so a filter works even when that exact query never reached a
-  source. No live adapter is configured yet, so an online query with an empty
-  cache exits 1 with an actionable message instead of pretending to search. The
-  polite-pool contact email is needed for the next slice (4b), not this one.
+  filters to the local rows (indexed or not), so a filter works even when that
+  exact query never reached a source and an indexed answer cannot override the
+  stored fields. No live adapter is configured yet, so an online query with an
+  empty cache exits 1 with an actionable message instead of pretending to
+  search. The polite-pool contact email is needed for the next slice (4b), not
+  this one.
+* Migration 6 gained `programs.degree_level` while the branch was under review,
+  before merge. A database created from an earlier commit of this branch is at
+  version 6 without that column; recreate it. No released schema depends on it.
 * A program the source stops listing stays in the cache, marked stale after its
   TTL. 4a does not delete it: a partial refresh must not remove verified data.
   The browse UI treats cache rows as orientation, never as verified truth.
-* Tests: 45 new (`tests/test_research_cache.py`, `tests/test_discovery.py`)
-  covering key/TTL boundaries, validation (including duplicate sources and null
-  lists), provenance, zero-call cache hits, refresh-in-place, stale fallback
-  after a failure (mixed TTLs), retry backoff, empty-result caching, offline
-  browsing and filtering, batched reads under a low SQLite parameter limit,
-  cross-connection reuse and the CLI paths. Full suite: 504 passed, 2 skipped.
+* Tests: 47 new (`tests/test_research_cache.py`, `tests/test_discovery.py`)
+  covering key/TTL boundaries, validation (including duplicate sources, null
+  lists and null sources), provenance, zero-call cache hits, refresh-in-place,
+  stale fallback after a failure (mixed TTLs), retry backoff, empty-result
+  caching, offline browsing and filtering (indexed and unindexed), batched reads
+  under a low SQLite parameter limit in both modules, degree-level identity,
+  cross-connection reuse and the CLI paths. Full suite: 506 passed, 2 skipped.
