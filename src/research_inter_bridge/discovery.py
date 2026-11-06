@@ -496,18 +496,21 @@ def search_programs(
     try:
         records = tuple(validate_program(record) for record in adapter.search(normalised))
     except Exception as exc:  # adapter boundary: network, parsing or validation
-        _record_failure(connection, cached, checked_at, exc)
-        _audit(
-            connection,
-            actor=actor,
-            action="research.refresh_failed",
-            outcome="failure",
-            metadata={
-                "fingerprint": fingerprint,
-                "adapter": getattr(adapter, "name", adapter.__class__.__name__),
-                "error": exc.__class__.__name__,
-            },
-        )
+        with db.transaction(connection):
+            # The stale markers and the failure audit row commit together, so a
+            # crash cannot leave one without the other.
+            _record_failure(connection, cached, checked_at, exc)
+            _audit(
+                connection,
+                actor=actor,
+                action="research.refresh_failed",
+                outcome="failure",
+                metadata={
+                    "fingerprint": fingerprint,
+                    "adapter": getattr(adapter, "name", adapter.__class__.__name__),
+                    "error": exc.__class__.__name__,
+                },
+            )
         if cached:
             return DiscoveryResult(
                 query=normalised,
@@ -1010,18 +1013,19 @@ def _record_failure(
     now: datetime,
     error: Exception,
 ) -> None:
+    """Mark cached rows stale; the caller owns the transaction."""
+
     if not programs:
         return
     attempted_at = cache.to_timestamp(now)
-    with db.transaction(connection):
-        for program in programs:
-            cache.mark_refresh_failed(
-                connection,
-                entity_type="program",
-                entity_id=program.id,
-                attempted_at=attempted_at,
-                error=error.__class__.__name__,
-            )
+    for program in programs:
+        cache.mark_refresh_failed(
+            connection,
+            entity_type="program",
+            entity_id=program.id,
+            attempted_at=attempted_at,
+            error=error.__class__.__name__,
+        )
 
 
 def _audit(
