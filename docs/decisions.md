@@ -418,17 +418,29 @@ source.
 * `DiscoveredProgram` defaults to unknown (`None`, empty, `unverified`). The
   validator rejects malformed records (bad URL, impossible date range, unknown
   status, out-of-range confidence) and never fills a gap. A record is stored with
-  exactly the values its source stated.
+  exactly the values its source stated. A JSON `null` list means "no items", and
+  duplicate source URLs are collapsed because the table keeps one row per
+  program and URL.
 * A fresh query performs zero adapter calls. A non-empty result is fresh while
   each program's TTL holds; an empty result is cached for one day so repeating a
   query that found nothing does not call the source either.
 * A failed refresh keeps the previous rows, marks their cache entries stale
-  (`last_error`) and audits the failure by error class. Stale rows are still
-  returned, labelled stale, because deleting verified data is worse than showing
-  it with an honest timestamp.
+  (`last_error`) and audits the failure by error class. Derived institution and
+  department entries fail with the program page that backs them, and the returned
+  rows are reloaded so every `Program.stale` flag agrees with the top-level
+  result. Stale rows are still returned, labelled stale, because deleting
+  verified data is worse than showing it with an honest timestamp.
+* A failed refresh is not retried for one hour (`FAILED_REFRESH_RETRY_SECONDS`).
+  Without that window, every repeated query against a broken source would hit
+  it again, which §13.3 forbids.
 * Institution and department cache entries are derived from the official program
   page for now and refreshed with it. Their own pages are added with the browse
   hierarchy (§13.2).
+* A program the source stops listing stays in the cache: it remains browsable
+  offline (stale after its TTL) but is never presented as verified. 4a does not
+  tombstone or delete it, because a partial or failed refresh must not remove
+  verified data. The browse UI must treat these rows as orientation, not as
+  current truth; an explicit tombstone can be added with the browse hierarchy.
 * Raw payloads are referenced by path only; an adapter that stores one must keep
   it outside Git and under the data directory.
 

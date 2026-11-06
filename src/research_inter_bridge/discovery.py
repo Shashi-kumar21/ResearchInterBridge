@@ -24,7 +24,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
@@ -48,6 +48,11 @@ EMPTY_RESULT_TTL_DAYS = 1
 #: SQLite limits the number of bound parameters per statement. Reads are split
 #: into batches of this size so browsing the whole cache stays safe.
 READ_BATCH_SIZE = 500
+
+#: After a failed refresh, the source is not retried for this long (§13.3: never
+#: poll a provider aggressively). One hour is short enough that a transient
+#: outage clears itself and long enough that a broken source is not hammered.
+FAILED_REFRESH_RETRY_SECONDS = 60 * 60
 
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -246,7 +251,7 @@ def validate_program(record: DiscoveredProgram) -> DiscoveredProgram:
     if http_status is not None and not 100 <= http_status <= 599:
         raise DiscoveryError("http_status must be an HTTP status between 100 and 599.")
 
-    sources = tuple(
+    sources = _unique_sources(
         SourceRef(
             url=_url(source.url, "source url"),
             publisher=_optional_text(source.publisher, "source publisher", MAX_NAME_LENGTH),
@@ -321,13 +326,30 @@ def _query_text(value: str | None, field: str, max_length: int) -> str | None:
     return cache.normalise_text(_required_text(value, field, max_length))
 
 
-def _text_tuple(values: Sequence[str], field: str) -> tuple[str, ...]:
+def _text_tuple(values: Sequence[str] | None, field: str) -> tuple[str, ...]:
+    """Clean a list field; ``None`` means "the source stated no items"."""
+
+    if values is None:
+        return ()
     if isinstance(values, str):
         raise DiscoveryError(f"{field} must be a sequence of strings, not a string.")
     cleaned = tuple(_required_text(item, field, MAX_TEXT_LENGTH) for item in values)
     if len(cleaned) > MAX_ITEMS:
         raise DiscoveryError(f"{field} must contain at most {MAX_ITEMS} items.")
     return tuple(dict.fromkeys(cleaned))
+
+
+def _unique_sources(sources: Iterable[SourceRef]) -> tuple[SourceRef, ...]:
+    """Keep one entry per URL; the database has a unique (program, url) key."""
+
+    unique: list[SourceRef] = []
+    seen: set[str] = set()
+    for source in sources:
+        if source.url in seen:
+            continue
+        seen.add(source.url)
+        unique.append(source)
+    return tuple(unique)
 
 
 def _optional_date(value: str | None, field: str) -> str | None:
@@ -485,6 +507,19 @@ def search_programs(
 
     if adapter is None:
         if cached:
+            _audit(
+                connection,
+                actor=actor,
+                action="research.query_served",
+                outcome="success",
+                metadata={
+                    "fingerprint": fingerprint,
+                    "served_from": "cache",
+                    "programs": len(cached),
+                    "stale": True,
+                    "adapter": None,
+                },
+            )
             return DiscoveryResult(
                 query=normalised,
                 programs=cached,
@@ -495,6 +530,33 @@ def search_programs(
         raise DiscoveryUnavailableError(
             "no research discovery adapter is configured, so there is no live source to "
             "query. Configure one, or browse the cache in offline mode."
+        )
+
+    if _refresh_backed_off(connection, cached, checked_at):
+        # A recent attempt already failed; retrying now would only hammer the
+        # source. Serve what is cached, labelled stale.
+        _audit(
+            connection,
+            actor=actor,
+            action="research.query_served",
+            outcome="success",
+            metadata={
+                "fingerprint": fingerprint,
+                "served_from": "cache",
+                "programs": len(cached),
+                "stale": True,
+                "adapter": None,
+            },
+        )
+        return DiscoveryResult(
+            query=normalised,
+            programs=cached,
+            served_from_cache=True,
+            stale=True,
+            message=(
+                "Showing cached results; the last refresh failed less than an hour ago, "
+                "so the source is not retried yet. Treat them as stale, not verified."
+            ),
         )
 
     try:
@@ -516,12 +578,18 @@ def search_programs(
                 },
             )
         if cached:
+            # Reload: the rows were read before the failure, so their per-program
+            # `stale` flag is now out of date. Returning the old objects would
+            # report `stale: false` for a program whose entry was just marked.
+            stale = _load_programs(
+                connection, tuple(program.id for program in cached), now=checked_at
+            )
             return DiscoveryResult(
                 query=normalised,
-                programs=cached,
+                programs=stale,
                 served_from_cache=True,
                 stale=True,
-                message=_stale_message(cached, failed=True),
+                message=_stale_message(stale, failed=True),
             )
         if isinstance(exc, DiscoveryError):
             raise
@@ -862,7 +930,11 @@ def _index_entry(
     if not isinstance(decoded, list):
         raise CacheError("the research query index must store a list of program ids.")
     expires_at = None if row["expires_at"] is None else str(row["expires_at"])
-    return tuple(int(value) for value in decoded), expires_at
+    try:
+        ids = tuple(int(value) for value in decoded)
+    except (TypeError, ValueError) as exc:
+        raise CacheError("the research query index contains a non-integer program id.") from exc
+    return ids, expires_at
 
 
 def _all_program_ids(connection: sqlite3.Connection) -> tuple[int, ...]:
@@ -1077,14 +1149,74 @@ def _record_failure(
     if not programs:
         return
     attempted_at = cache.to_timestamp(now)
+    error_name = error.__class__.__name__
     for program in programs:
         cache.mark_refresh_failed(
             connection,
             entity_type="program",
             entity_id=program.id,
             attempted_at=attempted_at,
-            error=error.__class__.__name__,
+            error=error_name,
         )
+    _mark_derived_failure(connection, programs, attempted_at=attempted_at, error=error_name)
+
+
+def _mark_derived_failure(
+    connection: sqlite3.Connection,
+    programs: Sequence[Program],
+    *,
+    attempted_at: str,
+    error: str,
+) -> None:
+    """Institution/department entries refresh with their program page (ADR-016).
+
+    They must therefore fail with it; otherwise the browse hierarchy would show
+    a derived record as fresh right after its only source failed.
+    """
+
+    institutions: set[int] = set()
+    departments: set[int] = set()
+    for batch in _batches(tuple(program.id for program in programs)):
+        placeholders = ", ".join("?" for _ in batch)
+        rows = connection.execute(
+            f"SELECT institution_id, department_id FROM programs "  # noqa: S608
+            f"WHERE id IN ({placeholders})",
+            batch,
+        ).fetchall()
+        for row in rows:
+            if row["institution_id"] is not None:
+                institutions.add(int(row["institution_id"]))
+            if row["department_id"] is not None:
+                departments.add(int(row["department_id"]))
+    for entity_type, entity_ids in (("institution", institutions), ("department", departments)):
+        for entity_id in sorted(entity_ids):
+            cache.mark_refresh_failed(
+                connection,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                attempted_at=attempted_at,
+                error=error,
+            )
+
+
+def _refresh_backed_off(
+    connection: sqlite3.Connection, programs: Sequence[Program], now: datetime
+) -> bool:
+    """True when the last refresh attempt failed recently (§13.3)."""
+
+    if not programs:
+        return False
+    entries = cache.entries_for_entities(
+        connection, entity_type="program", entity_ids=tuple(program.id for program in programs)
+    )
+    cutoff = now - timedelta(seconds=FAILED_REFRESH_RETRY_SECONDS)
+    for program in programs:
+        for entry in entries.get(program.id, ()):
+            if entry.last_error is None:
+                continue
+            if cache.parse_timestamp(entry.last_attempt_at) > cutoff:
+                return True
+    return False
 
 
 def _audit(

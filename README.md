@@ -114,7 +114,8 @@ This slice ships no live source adapter yet: `--offline` browses what is cached
 and matches the filters against the local cache, so a filter works even when that
 exact query never reached a source. An online query without an adapter exits `1`
 with an actionable message. A fresh query makes no network call; a stale entry is
-refreshed on demand, and a failed refresh keeps the previous record marked stale.
+refreshed on demand, and a failed refresh keeps the previous record marked stale
+and is not retried for an hour.
 
 ## HTTP API (`serve`)
 

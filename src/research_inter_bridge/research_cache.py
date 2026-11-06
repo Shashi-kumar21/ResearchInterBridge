@@ -31,6 +31,10 @@ from .errors import CacheError
 
 DAY_SECONDS = 24 * 60 * 60
 
+#: SQLite caps the number of bound parameters per statement, so batch reads of
+#: cache entries are split into groups of this size.
+READ_BATCH_SIZE = 500
+
 #: ``task.md`` §13.3. Program data is split three ways because a deadline makes
 #: an otherwise slow-changing page time-critical.
 TTL_INSTITUTION_SECONDS = 90 * DAY_SECONDS
@@ -286,20 +290,24 @@ def entries_for_entities(
     """Batch form of :func:`entries_for_entity`, keyed by entity id.
 
     Used when listing programs so the screen does not issue one query per row.
+    Large id lists are split because SQLite caps bound parameters per statement.
     """
 
     if not entity_ids:
         return {}
-    placeholders = ", ".join("?" for _ in entity_ids)
-    rows = connection.execute(
-        f"SELECT {_COLUMNS} FROM research_cache_entries "  # noqa: S608
-        f"WHERE entity_type = ? AND entity_id IN ({placeholders}) ORDER BY id",
-        (entity_type, *entity_ids),
-    ).fetchall()
     grouped: dict[int, list[CacheEntry]] = {}
-    for row in rows:
-        entry = _entry_from_row(row)
-        grouped.setdefault(entry.entity_id, []).append(entry)
+    unique_ids = tuple(dict.fromkeys(entity_ids))
+    for start in range(0, len(unique_ids), READ_BATCH_SIZE):
+        batch = unique_ids[start : start + READ_BATCH_SIZE]
+        placeholders = ", ".join("?" for _ in batch)
+        rows = connection.execute(
+            f"SELECT {_COLUMNS} FROM research_cache_entries "  # noqa: S608
+            f"WHERE entity_type = ? AND entity_id IN ({placeholders}) ORDER BY id",
+            (entity_type, *batch),
+        ).fetchall()
+        for row in rows:
+            entry = _entry_from_row(row)
+            grouped.setdefault(entry.entity_id, []).append(entry)
     return {entity_id: tuple(values) for entity_id, values in grouped.items()}
 
 

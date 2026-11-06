@@ -10,7 +10,7 @@ import pytest
 
 from research_inter_bridge import db, discovery
 from research_inter_bridge import research_cache as cache
-from research_inter_bridge.errors import DiscoveryError, DiscoveryUnavailableError
+from research_inter_bridge.errors import CacheError, DiscoveryError, DiscoveryUnavailableError
 
 NOW = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
 OFFICIAL_URL = "https://www.tum.de/en/studies/programs/msc-research-internship"
@@ -79,6 +79,36 @@ def test_validation_normalises_and_adds_the_official_source() -> None:
     assert cleaned.research_areas == ("machine learning", "physics")
     assert cleaned.sources[0].url == OFFICIAL_URL
     assert cleaned.sources[1].kind == "application_page"
+
+
+def test_duplicate_source_urls_are_collapsed_to_one() -> None:
+    # A JSON adapter may repeat a URL under two kinds; the database stores one
+    # row per (program, url), so validation must not let the duplicate through.
+    cleaned = discovery.validate_program(
+        make_program(
+            sources=(
+                discovery.SourceRef(url=OFFICIAL_URL, kind="official_page"),
+                discovery.SourceRef(url=OFFICIAL_URL, kind="application_page"),
+                discovery.SourceRef(url="https://www.tum.de/en/apply", kind="application_page"),
+            ),
+        )
+    )
+
+    assert [source.url for source in cleaned.sources] == [
+        OFFICIAL_URL,
+        "https://www.tum.de/en/apply",
+    ]
+    assert cleaned.sources[0].kind == "official_page"
+
+
+def test_null_lists_are_treated_as_no_items() -> None:
+    cleaned = discovery.validate_program(
+        make_program(research_areas=None, eligibility=None, required_documents=None)
+    )
+
+    assert cleaned.research_areas == ()
+    assert cleaned.eligibility == ()
+    assert cleaned.required_documents == ()
 
 
 @pytest.mark.parametrize(
@@ -261,16 +291,86 @@ def test_a_failed_refresh_keeps_the_previous_data_and_marks_it_stale(
     assert len(result.programs) == 1
     assert result.programs[0].name == "MSc Research Internship"
     assert result.programs[0].status == "upcoming"
+    # Every returned row was reloaded after the failure, so the per-program flag
+    # agrees with the top-level one instead of claiming a fresh row.
+    assert all(program.stale for program in result.programs)
 
     entry = cache.get_entry(connection, discovery.program_key(make_program()))
     assert entry is not None
     assert entry.last_error == "TimeoutError"
+    for entity_type in ("institution", "department"):
+        derived = cache.list_entries(connection, entity_type=entity_type)
+        assert [row.last_error for row in derived] == ["TimeoutError"]
 
     failed = connection.execute(
         "SELECT outcome, metadata_json FROM audit_events WHERE action = 'research.refresh_failed'"
     ).fetchone()
     assert failed["outcome"] == "failure"
     assert json.loads(failed["metadata_json"])["error"] == "TimeoutError"
+
+
+def test_a_mixed_ttl_failure_marks_every_returned_program_stale(
+    connection: sqlite3.Connection,
+) -> None:
+    near = make_program(name="Near deadline", closing_date="2026-11-07")
+    far = make_program(
+        name="Far deadline",
+        closing_date="2027-06-01",
+        official_url="https://www.tum.de/en/studies/programs/far",
+    )
+    discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(country="Germany"),
+        adapter=FakeAdapter(records=(near, far)),
+        now=NOW,
+    )
+
+    # Only `near` is past its one-day TTL, which is enough to trigger a refresh.
+    result = discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(country="Germany"),
+        adapter=FakeAdapter(error=TimeoutError("provider timed out")),
+        now=NOW + timedelta(days=2),
+    )
+
+    assert result.stale
+    assert {program.name for program in result.programs} == {"Near deadline", "Far deadline"}
+    assert all(program.stale for program in result.programs)
+
+
+def test_a_recent_failure_is_not_retried_immediately(connection: sqlite3.Connection) -> None:
+    discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(country="Germany"),
+        adapter=FakeAdapter(records=(make_program(),)),
+        now=NOW,
+    )
+    discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(country="Germany"),
+        adapter=FakeAdapter(error=TimeoutError("provider timed out")),
+        now=NOW + timedelta(days=15),
+    )
+    bomb = FakeAdapter(error=AssertionError("a recent failure must not be retried"))
+
+    cooled_down = discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(country="Germany"),
+        adapter=bomb,
+        now=NOW + timedelta(days=15, minutes=30),
+    )
+    retried = discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(country="Germany"),
+        adapter=FakeAdapter(records=(make_program(),)),
+        now=NOW + timedelta(days=15, hours=2),
+    )
+
+    assert bomb.calls == 0
+    assert cooled_down.stale and cooled_down.served_from_cache
+    assert "not retried yet" in (cooled_down.message or "")
+    assert not retried.served_from_cache
+    assert retried.programs[0].stale is False
 
 
 def test_a_failed_refresh_without_cached_rows_raises(connection: sqlite3.Connection) -> None:
@@ -392,24 +492,35 @@ def test_offline_filtering_treats_unknown_as_unknown(connection: sqlite3.Connect
     assert unfiltered.programs[0].degree_level is None
 
 
-def test_browsing_a_large_cache_is_batched_and_sorted(connection: sqlite3.Connection) -> None:
-    """A whole-cache browse must not exceed SQLite's bound-parameter limit."""
+def test_browsing_batches_reads_under_a_low_parameter_limit(
+    connection: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: an unbatched read fails once ids exceed SQLite's limit."""
 
-    records = tuple(
-        make_program(
-            name=f"Program {index:04d}",
-            official_url=f"https://example.edu/program/{index}",
+    # The program INSERT itself binds 24 parameters, so the limit must stay
+    # above that; batching at 10 makes 31 ids impossible in one statement.
+    previous_limit = connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 30)
+    monkeypatch.setattr(discovery, "READ_BATCH_SIZE", 10)
+    try:
+        records = tuple(
+            make_program(
+                name=f"Program {index:04d}",
+                official_url=f"https://example.edu/program/{index}",
+            )
+            for index in range(31)
         )
-        for index in range(discovery.READ_BATCH_SIZE + 1)
-    )
 
-    discovery.search_programs(
-        connection,
-        discovery.ProgramQuery(country="Germany"),
-        adapter=FakeAdapter(records=records),
-        now=NOW,
-    )
-    result = discovery.search_programs(connection, discovery.ProgramQuery(), offline=True, now=NOW)
+        discovery.search_programs(
+            connection,
+            discovery.ProgramQuery(country="Germany"),
+            adapter=FakeAdapter(records=records),
+            now=NOW,
+        )
+        result = discovery.search_programs(
+            connection, discovery.ProgramQuery(), offline=True, now=NOW
+        )
+    finally:
+        connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, previous_limit)
 
     assert len(result.programs) == len(records)
     names = [program.name for program in result.programs]
@@ -460,6 +571,51 @@ def test_an_empty_result_is_cached_briefly(connection: sqlite3.Connection) -> No
 def test_no_adapter_and_no_cache_is_actionable(connection: sqlite3.Connection) -> None:
     with pytest.raises(DiscoveryUnavailableError, match="no research discovery adapter"):
         discovery.search_programs(connection, discovery.ProgramQuery(country="Germany"), now=NOW)
+
+
+def test_serving_stale_data_without_an_adapter_is_audited(
+    connection: sqlite3.Connection,
+) -> None:
+    discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(country="Germany"),
+        adapter=FakeAdapter(records=(make_program(),)),
+        now=NOW,
+    )
+
+    result = discovery.search_programs(
+        connection,
+        discovery.ProgramQuery(country="Germany"),
+        now=NOW + timedelta(days=15),
+    )
+
+    assert result.stale and result.served_from_cache
+    event = connection.execute(
+        "SELECT metadata_json FROM audit_events WHERE action = 'research.query_served' "
+        "ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    metadata = json.loads(event["metadata_json"])
+    assert metadata["served_from"] == "cache"
+    assert metadata["stale"] is True
+
+
+def test_a_corrupt_query_index_raises_a_cache_error(connection: sqlite3.Connection) -> None:
+    fingerprint = discovery.ProgramQuery(country="Germany").fingerprint()
+    connection.execute(
+        "INSERT INTO research_query_index "
+        "(fingerprint, entity_type, entity_ids_json, created_at, updated_at) "
+        "VALUES (?, 'program', '[\"not-an-int\"]', '2026-11-05T00:00:00+00:00', "
+        "'2026-11-05T00:00:00+00:00')",
+        (fingerprint,),
+    )
+
+    with pytest.raises(CacheError, match="non-integer"):
+        discovery.search_programs(
+            connection,
+            discovery.ProgramQuery(country="Germany"),
+            adapter=FakeAdapter(records=()),
+            now=NOW,
+        )
 
 
 def test_programs_are_public_and_reused_across_connections(
