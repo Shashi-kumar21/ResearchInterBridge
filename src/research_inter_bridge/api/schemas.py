@@ -247,3 +247,86 @@ class FactApplyRequest(_StrictModel):
 
 class FactApplyOut(BaseModel):
     applied: list[str]
+
+
+# --------------------------------------------------------------------------- #
+# research browsing (§13.2)
+# --------------------------------------------------------------------------- #
+
+
+class ProgramOut(BaseModel):
+    """A cached program with everything the browse/detail screen needs.
+
+    ``stale`` is per row: a stale program may be shown for orientation but is
+    never presented as verified for outreach or deadline decisions.
+    """
+
+    id: int
+    name: str
+    institution: str | None
+    institution_id: int | None
+    department: str | None
+    department_id: int | None
+    country: str | None
+    opportunity_type: str | None
+    degree_level: str | None
+    research_areas: list[str]
+    official_url: str
+    evidence_urls: list[str]
+    eligibility: list[str]
+    application_method: str | None
+    opening_date: str | None
+    closing_date: str | None
+    start_date: str | None
+    duration: str | None
+    stipend: str | None
+    tuition: str | None
+    accommodation: str | None
+    required_documents: list[str]
+    status: str
+    confidence: float | None
+    last_checked_at: str | None
+    stale: bool
+
+
+class ProgramListOut(BaseModel):
+    programs: list[ProgramOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class InstitutionOut(BaseModel):
+    id: int
+    name: str
+    country: str | None
+    website_url: str | None
+    program_count: int
+    department_count: int
+    last_checked_at: str | None
+    stale: bool
+
+
+class InstitutionListOut(BaseModel):
+    institutions: list[InstitutionOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class DepartmentOut(BaseModel):
+    id: int
+    institution_id: int
+    name: str
+    website_url: str | None
+    program_count: int
+    last_checked_at: str | None
+    stale: bool
+
+
+class DepartmentListOut(BaseModel):
+    institution: InstitutionOut
+    departments: list[DepartmentOut]
+    total: int
+    limit: int
+    offset: int

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, File, Form, Request, Response, UploadFile, status
+from fastapi import APIRouter, File, Form, Query, Request, Response, UploadFile, status
 
-from .. import auth, consent, documents, facts, parsing, profiles, ratelimit
+from .. import auth, consent, discovery, documents, facts, parsing, profiles, ratelimit
 from ..errors import (
     AuthError,
     DocumentNotFoundError,
@@ -32,6 +32,8 @@ from .schemas import (
     ConsentListOut,
     ConsentRequest,
     DeleteAccountRequest,
+    DepartmentListOut,
+    DepartmentOut,
     DocumentListOut,
     DocumentOut,
     FactApplyOut,
@@ -42,11 +44,15 @@ from .schemas import (
     FactUpdateOut,
     FactUpdateRequest,
     HealthOut,
+    InstitutionListOut,
+    InstitutionOut,
     LoginRequest,
     MeOut,
     ParseOut,
     ProfileOut,
     ProfileRequest,
+    ProgramListOut,
+    ProgramOut,
     RegisterRequest,
     SessionOut,
 )
@@ -84,6 +90,15 @@ DOCUMENT_STATUS_CODES: dict[str, int] = {
     "unsupported_document": status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
     "document_unreadable": status.HTTP_422_UNPROCESSABLE_ENTITY,
     "deletion_incomplete": status.HTTP_409_CONFLICT,
+}
+
+DISCOVERY_STATUS_CODES: dict[str, int] = {
+    "invalid_discovery": status.HTTP_400_BAD_REQUEST,
+    "program_missing": status.HTTP_404_NOT_FOUND,
+    "institution_missing": status.HTTP_404_NOT_FOUND,
+    # No adapter is configured for live discovery; the browse routes never
+    # raise this, but a future search route must not turn it into a 500.
+    "discovery_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 #: Bytes read per call when draining an upload. The whole file is never trusted
@@ -173,6 +188,62 @@ def _group_out(group: facts.FactGroup) -> FactGroupOut:
         pending=[_fact_out(candidate) for candidate in group.pending],
         confirmed=[_fact_out(candidate) for candidate in group.confirmed],
         has_conflict=group.has_conflict,
+    )
+
+
+def _program_out(program: discovery.Program) -> ProgramOut:
+    return ProgramOut(
+        id=program.id,
+        name=program.name,
+        institution=program.institution,
+        institution_id=program.institution_id,
+        department=program.department,
+        department_id=program.department_id,
+        country=program.country,
+        opportunity_type=program.opportunity_type,
+        degree_level=program.degree_level,
+        research_areas=list(program.research_areas),
+        official_url=program.official_url,
+        evidence_urls=list(program.evidence_urls),
+        eligibility=list(program.eligibility),
+        application_method=program.application_method,
+        opening_date=program.opening_date,
+        closing_date=program.closing_date,
+        start_date=program.start_date,
+        duration=program.duration,
+        stipend=program.stipend,
+        tuition=program.tuition,
+        accommodation=program.accommodation,
+        required_documents=list(program.required_documents),
+        status=program.status,
+        confidence=program.confidence,
+        last_checked_at=program.last_checked_at,
+        stale=program.stale,
+    )
+
+
+def _institution_out(institution: discovery.Institution) -> InstitutionOut:
+    return InstitutionOut(
+        id=institution.id,
+        name=institution.name,
+        country=institution.country,
+        website_url=institution.website_url,
+        program_count=institution.program_count,
+        department_count=institution.department_count,
+        last_checked_at=institution.last_checked_at,
+        stale=institution.stale,
+    )
+
+
+def _department_out(department: discovery.Department) -> DepartmentOut:
+    return DepartmentOut(
+        id=department.id,
+        institution_id=department.institution_id,
+        name=department.name,
+        website_url=department.website_url,
+        program_count=department.program_count,
+        last_checked_at=department.last_checked_at,
+        stale=department.stale,
     )
 
 
@@ -694,3 +765,122 @@ def update_fact(
         raise FactNotFoundError(f"fact {fact_id} does not exist for this account.")
 
     return FactUpdateOut(fact_id=fact_id, status=payload.status, already_set=already_set)
+
+
+# --------------------------------------------------------------------------- #
+# research browsing (§13.2)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/research/programs", response_model=ProgramListOut, tags=["research"])
+def list_research_programs(
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+    area: Annotated[str | None, Query(max_length=200)] = None,
+    country: Annotated[str | None, Query(max_length=200)] = None,
+    department: Annotated[str | None, Query(max_length=200)] = None,
+    degree_level: Annotated[str | None, Query(max_length=200)] = None,
+    institution_id: Annotated[int | None, Query(ge=1)] = None,
+    department_id: Annotated[int | None, Query(ge=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=discovery.MAX_BROWSE_LIMIT)] = (
+        discovery.DEFAULT_BROWSE_LIMIT
+    ),
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> ProgramListOut:
+    """Browse the shared program cache; this never calls a source.
+
+    Cache rows are public research data (§13.4), but the endpoint still requires
+    a session so the browse screens are not an anonymous quota-free proxy.
+    A row with ``stale: true`` is orientation only, not verified for outreach.
+    """
+
+    response.headers["Cache-Control"] = "no-store"
+    page = discovery.browse_programs(
+        connection,
+        discovery.ProgramFilters(
+            research_area=area,
+            country=country,
+            department=department,
+            degree_level=degree_level,
+            institution_id=institution_id,
+            department_id=department_id,
+        ),
+        limit=limit,
+        offset=offset,
+    )
+    return ProgramListOut(
+        programs=[_program_out(program) for program in page.programs],
+        total=page.total,
+        limit=page.limit,
+        offset=page.offset,
+    )
+
+
+@router.get("/research/programs/{program_id}", response_model=ProgramOut, tags=["research"])
+def get_research_program(
+    program_id: int,
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+) -> ProgramOut:
+    """Return one cached program; an unknown id is ``404 program_missing``."""
+
+    response.headers["Cache-Control"] = "no-store"
+    return _program_out(discovery.get_program(connection, program_id))
+
+
+@router.get("/research/institutions", response_model=InstitutionListOut, tags=["research"])
+def list_research_institutions(
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+    country: Annotated[str | None, Query(max_length=200)] = None,
+    limit: Annotated[int, Query(ge=1, le=discovery.MAX_BROWSE_LIMIT)] = (
+        discovery.DEFAULT_BROWSE_LIMIT
+    ),
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> InstitutionListOut:
+    """Browse cached institutions with their program/department counts."""
+
+    response.headers["Cache-Control"] = "no-store"
+    page = discovery.browse_institutions(connection, country=country, limit=limit, offset=offset)
+    return InstitutionListOut(
+        institutions=[_institution_out(institution) for institution in page.institutions],
+        total=page.total,
+        limit=page.limit,
+        offset=page.offset,
+    )
+
+
+@router.get(
+    "/research/institutions/{institution_id}/departments",
+    response_model=DepartmentListOut,
+    tags=["research"],
+)
+def list_research_departments(
+    institution_id: int,
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+    limit: Annotated[int, Query(ge=1, le=discovery.MAX_BROWSE_LIMIT)] = (
+        discovery.DEFAULT_BROWSE_LIMIT
+    ),
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> DepartmentListOut:
+    """Browse one institution's cached departments.
+
+    An unknown institution is ``404 institution_missing``; a known institution
+    with no cached departments is an empty page, which the screen can explain.
+    """
+
+    response.headers["Cache-Control"] = "no-store"
+    institution = discovery.get_institution(connection, institution_id)
+    page = discovery.browse_departments(connection, institution_id, limit=limit, offset=offset)
+    return DepartmentListOut(
+        institution=_institution_out(institution),
+        departments=[_department_out(department) for department in page.departments],
+        total=page.total,
+        limit=page.limit,
+        offset=page.offset,
+    )
