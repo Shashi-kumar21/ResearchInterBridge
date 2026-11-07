@@ -22,6 +22,7 @@ from ..config import Settings, load_settings
 from ..errors import (
     AuthError,
     ConsentError,
+    DiscoveryError,
     DocumentError,
     ProfileError,
     RateLimitError,
@@ -31,6 +32,7 @@ from .middleware import OriginGuardMiddleware
 from .routes import (
     AUTH_STATUS_CODES,
     CONSENT_STATUS_CODES,
+    DISCOVERY_STATUS_CODES,
     DOCUMENT_STATUS_CODES,
     PROFILE_STATUS_CODES,
     router,
@@ -175,6 +177,12 @@ def _install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ConsentError)
     async def _consent_error(request: Request, exc: ConsentError) -> JSONResponse:
         status_code = CONSENT_STATUS_CODES.get(exc.code, status.HTTP_400_BAD_REQUEST)
+        return error_response(status_code, exc.code, str(exc))
+
+    @app.exception_handler(DiscoveryError)
+    async def _discovery_error(request: Request, exc: DiscoveryError) -> JSONResponse:
+        # Messages name the field or the missing id, never a provider payload.
+        status_code = DISCOVERY_STATUS_CODES.get(exc.code, status.HTTP_400_BAD_REQUEST)
         return error_response(status_code, exc.code, str(exc))
 
     @app.exception_handler(StarletteHTTPException)

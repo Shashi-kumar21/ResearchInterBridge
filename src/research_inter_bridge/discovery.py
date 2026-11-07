@@ -32,7 +32,13 @@ from urllib.parse import urlsplit
 
 from . import db
 from . import research_cache as cache
-from .errors import CacheError, DiscoveryError, DiscoveryUnavailableError
+from .errors import (
+    CacheError,
+    DiscoveryError,
+    DiscoveryUnavailableError,
+    InstitutionNotFoundError,
+    ProgramNotFoundError,
+)
 
 PROGRAM_STATUSES: frozenset[str] = frozenset({"open", "upcoming", "closed", "unverified"})
 
@@ -54,7 +60,102 @@ READ_BATCH_SIZE = 500
 #: outage clears itself and long enough that a broken source is not hammered.
 FAILED_REFRESH_RETRY_SECONDS = 60 * 60
 
+#: Browse screens page through cached rows. The cap keeps one request from
+#: asking for an unbounded slice of the shared cache.
+DEFAULT_BROWSE_LIMIT = 25
+MAX_BROWSE_LIMIT = 100
+
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+#: Common ways a source states a level, mapped to one token so a BSc and a
+#: Bachelor do not become two programs. Anything not listed keeps its own text.
+DEGREE_ALIASES: dict[str, frozenset[str]] = {
+    "bachelor": frozenset(
+        {
+            "bachelor",
+            "bachelors",
+            "bachelor's",
+            "undergraduate",
+            "undergrad",
+            "bsc",
+            "b.sc",
+            "b.sc.",
+            "bs",
+            "ba",
+            "b.a",
+            "beng",
+            "b.eng",
+            "b.eng.",
+            "btech",
+            "b.tech",
+            "b.tech.",
+            "bachelor of science",
+            "bachelor of arts",
+            "bachelor of engineering",
+            "bachelor of technology",
+        }
+    ),
+    "master": frozenset(
+        {
+            "master",
+            "masters",
+            "master's",
+            "postgraduate",
+            "postgrad",
+            "msc",
+            "m.sc",
+            "m.sc.",
+            "ms",
+            "ma",
+            "m.a",
+            "m.a.",
+            "meng",
+            "m.eng",
+            "m.eng.",
+            "mtech",
+            "m.tech",
+            "m.tech.",
+            "mres",
+            "master of science",
+            "master of arts",
+            "master of engineering",
+            "master of technology",
+            "master of research",
+        }
+    ),
+    "phd": frozenset(
+        {
+            "phd",
+            "ph.d",
+            "ph.d.",
+            "doctorate",
+            "doctoral",
+            "dphil",
+            "d.phil",
+            "doctor of philosophy",
+        }
+    ),
+}
+
+
+def normalise_degree_level(value: str | None) -> str | None:
+    """Collapse a stated degree level to a stable token when it is a known alias.
+
+    ``"MSc"``, ``"Master of Science"``-style labels and ``"master"`` are the same
+    level for identity and filtering. An unrecognised value keeps its cleaned text
+    rather than being forced into ``other``, so the source's own wording survives.
+    """
+
+    if value is None:
+        return None
+    cleaned = " ".join(value.split())
+    if not cleaned:
+        return None
+    key = cleaned.casefold()
+    for canonical, aliases in DEGREE_ALIASES.items():
+        if key in aliases:
+            return canonical
+    return cleaned
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +177,7 @@ class ProgramQuery:
             research_area=_query_text(self.research_area, "research_area", 200),
             country=_query_text(self.country, "country", 200),
             department=_query_text(self.department, "department", 200),
-            degree_level=_query_text(self.degree_level, "degree_level", 200),
+            degree_level=_degree_query(self.degree_level),
         )
 
     def is_empty(self) -> bool:
@@ -163,6 +264,8 @@ class Program:
     name: str
     institution: str | None
     department: str | None
+    institution_id: int | None
+    department_id: int | None
     country: str | None
     opportunity_type: str | None
     degree_level: str | None
@@ -194,6 +297,86 @@ class DiscoveryResult:
     served_from_cache: bool
     stale: bool
     message: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProgramFilters:
+    """Filters for browsing the shared program cache directly.
+
+    Unlike :class:`ProgramQuery`, browsing never reaches an adapter: it is the
+    cache-read path behind the browse screens (§13.2). Every field is optional,
+    and an unknown (NULL) stored value never matches a stated filter.
+    """
+
+    research_area: str | None = None
+    country: str | None = None
+    department: str | None = None
+    degree_level: str | None = None
+    institution_id: int | None = None
+    department_id: int | None = None
+
+    def normalised(self) -> ProgramFilters:
+        return ProgramFilters(
+            research_area=_query_text(self.research_area, "research_area", 200),
+            country=_query_text(self.country, "country", 200),
+            department=_query_text(self.department, "department", 200),
+            degree_level=_degree_query(self.degree_level),
+            institution_id=_optional_id(self.institution_id, "institution_id"),
+            department_id=_optional_id(self.department_id, "department_id"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ProgramPage:
+    """One page of cached programs plus the total the filters matched."""
+
+    programs: tuple[Program, ...]
+    total: int
+    limit: int
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class Institution:
+    """A cached institution as shown on the browse screen."""
+
+    id: int
+    name: str
+    country: str | None
+    website_url: str | None
+    program_count: int
+    department_count: int
+    last_checked_at: str | None
+    stale: bool
+
+
+@dataclass(frozen=True, slots=True)
+class InstitutionPage:
+    institutions: tuple[Institution, ...]
+    total: int
+    limit: int
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class Department:
+    """A cached department, always scoped to its institution."""
+
+    id: int
+    institution_id: int
+    name: str
+    website_url: str | None
+    program_count: int
+    last_checked_at: str | None
+    stale: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DepartmentPage:
+    departments: tuple[Department, ...]
+    total: int
+    limit: int
+    offset: int
 
 
 class ProgramAdapter(Protocol):
@@ -270,7 +453,9 @@ def validate_program(record: DiscoveredProgram) -> DiscoveredProgram:
         country=_optional_text(record.country, "country", 200),
         department=_optional_text(record.department, "department", MAX_NAME_LENGTH),
         opportunity_type=_optional_text(record.opportunity_type, "opportunity_type", 100),
-        degree_level=_optional_text(record.degree_level, "degree_level", 100),
+        degree_level=normalise_degree_level(
+            _optional_text(record.degree_level, "degree_level", 100)
+        ),
         research_areas=_text_tuple(record.research_areas, "research_areas"),
         eligibility=_text_tuple(record.eligibility, "eligibility"),
         application_method=_optional_text(
@@ -324,6 +509,36 @@ def _query_text(value: str | None, field: str, max_length: int) -> str | None:
     if value is None:
         return None
     return cache.normalise_text(_required_text(value, field, max_length))
+
+
+def _degree_query(value: str | None) -> str | None:
+    """Normalise a degree filter: aliases collapse, unknown text is case-folded."""
+
+    if value is None:
+        return None
+    cleaned = _required_text(value, "degree_level", 200)
+    canonical = normalise_degree_level(cleaned)
+    return None if canonical is None else cache.normalise_text(canonical)
+
+
+def _optional_id(value: int | None, field: str) -> int | None:
+    """A positive row id or ``None``; ``bool`` is not accepted as an id."""
+
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise DiscoveryError(f"{field} must be a positive integer or None.")
+    return value
+
+
+def _page_bounds(limit: int, offset: int) -> tuple[int, int]:
+    if isinstance(limit, bool) or not isinstance(limit, int):
+        raise DiscoveryError("limit must be an integer.")
+    if not 1 <= limit <= MAX_BROWSE_LIMIT:
+        raise DiscoveryError(f"limit must be between 1 and {MAX_BROWSE_LIMIT}.")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise DiscoveryError("offset must be zero or a positive integer.")
+    return limit, offset
 
 
 def _text_tuple(values: Sequence[str] | None, field: str) -> tuple[str, ...]:
@@ -627,6 +842,231 @@ def search_programs(
         stale=False,
         message=None,
     )
+
+
+# --------------------------------------------------------------------------- #
+# cache-only browsing (§13.2)
+# --------------------------------------------------------------------------- #
+
+
+def browse_programs(
+    connection: sqlite3.Connection,
+    filters: ProgramFilters | None = None,
+    *,
+    limit: int = DEFAULT_BROWSE_LIMIT,
+    offset: int = 0,
+    now: datetime | None = None,
+) -> ProgramPage:
+    """Return one page of cached programs, filtered and sorted by name.
+
+    This is a pure cache read: it never calls an adapter, so it works offline.
+    ``total`` is the number of rows the filters matched, not the page size, so
+    the screen can say "3 of 41".
+    """
+
+    checked_at = now or datetime.now(UTC)
+    normalised = (filters or ProgramFilters()).normalised()
+    limit, offset = _page_bounds(limit, offset)
+    matched = [
+        int(row["id"])
+        for row in _program_rows(connection)
+        if _program_matches(
+            row,
+            research_area=normalised.research_area,
+            country=normalised.country,
+            department=normalised.department,
+            degree_level=normalised.degree_level,
+            institution_id=normalised.institution_id,
+            department_id=normalised.department_id,
+        )
+    ]
+    page_ids = matched[offset : offset + limit]
+    return ProgramPage(
+        programs=_load_programs(connection, page_ids, now=checked_at),
+        total=len(matched),
+        limit=limit,
+        offset=offset,
+    )
+
+
+def get_program(
+    connection: sqlite3.Connection, program_id: int, *, now: datetime | None = None
+) -> Program:
+    """Return one cached program or raise :class:`ProgramNotFoundError`."""
+
+    checked_at = now or datetime.now(UTC)
+    program_id = _optional_id(program_id, "program_id") or 0
+    programs = _load_programs(connection, (program_id,), now=checked_at)
+    if not programs:
+        raise ProgramNotFoundError(f"program {program_id} is not in the shared cache.")
+    return programs[0]
+
+
+def browse_institutions(
+    connection: sqlite3.Connection,
+    *,
+    country: str | None = None,
+    limit: int = DEFAULT_BROWSE_LIMIT,
+    offset: int = 0,
+    now: datetime | None = None,
+) -> InstitutionPage:
+    """Return one page of cached institutions with their program/department counts."""
+
+    checked_at = now or datetime.now(UTC)
+    country_filter = _query_text(country, "country", 200)
+    limit, offset = _page_bounds(limit, offset)
+    rows = [
+        row
+        for row in _institution_rows(connection)
+        if country_filter is None or _same_text(row["country"], country_filter)
+    ]
+    page = rows[offset : offset + limit]
+    states = _cache_states(
+        connection, "institution", tuple(int(row["id"]) for row in page), now=checked_at
+    )
+    return InstitutionPage(
+        institutions=tuple(
+            _institution_from_row(row, states.get(int(row["id"]), (None, True))) for row in page
+        ),
+        total=len(rows),
+        limit=limit,
+        offset=offset,
+    )
+
+
+def get_institution(
+    connection: sqlite3.Connection, institution_id: int, *, now: datetime | None = None
+) -> Institution:
+    """Return one cached institution or raise :class:`InstitutionNotFoundError`."""
+
+    checked_at = now or datetime.now(UTC)
+    institution_id = _optional_id(institution_id, "institution_id") or 0
+    rows = _institution_rows(connection, institution_id=institution_id)
+    if not rows:
+        raise InstitutionNotFoundError(f"institution {institution_id} is not in the shared cache.")
+    state = _cache_states(connection, "institution", (institution_id,), now=checked_at)
+    return _institution_from_row(rows[0], state.get(institution_id, (None, True)))
+
+
+def browse_departments(
+    connection: sqlite3.Connection,
+    institution_id: int,
+    *,
+    limit: int = DEFAULT_BROWSE_LIMIT,
+    offset: int = 0,
+    now: datetime | None = None,
+) -> DepartmentPage:
+    """Return one page of an institution's departments, sorted by name.
+
+    An unknown institution raises rather than returning an empty page, so the
+    screen can tell "no departments cached" from "this id does not exist".
+    """
+
+    checked_at = now or datetime.now(UTC)
+    institution_id = _optional_id(institution_id, "institution_id") or 0
+    get_institution(connection, institution_id, now=checked_at)
+    limit, offset = _page_bounds(limit, offset)
+    rows = _department_rows(connection, institution_id=institution_id)
+    page = rows[offset : offset + limit]
+    states = _cache_states(
+        connection, "department", tuple(int(row["id"]) for row in page), now=checked_at
+    )
+    return DepartmentPage(
+        departments=tuple(
+            _department_from_row(row, states.get(int(row["id"]), (None, True))) for row in page
+        ),
+        total=len(rows),
+        limit=limit,
+        offset=offset,
+    )
+
+
+def _institution_rows(
+    connection: sqlite3.Connection, *, institution_id: int | None = None
+) -> list[sqlite3.Row]:
+    where = "" if institution_id is None else "WHERE i.id = ?"
+    parameters: tuple[Any, ...] = () if institution_id is None else (institution_id,)
+    return connection.execute(
+        f"""
+        SELECT i.id, i.name, i.country, i.website_url,
+               (SELECT COUNT(*) FROM programs AS p WHERE p.institution_id = i.id)
+                   AS program_count,
+               (SELECT COUNT(*) FROM departments AS d WHERE d.institution_id = i.id)
+                   AS department_count
+        FROM institutions AS i
+        {where}
+        ORDER BY i.name, i.id
+        """,  # noqa: S608 - the only interpolation is a fixed WHERE clause
+        parameters,
+    ).fetchall()
+
+
+def _department_rows(connection: sqlite3.Connection, *, institution_id: int) -> list[sqlite3.Row]:
+    return connection.execute(
+        """
+        SELECT d.id, d.institution_id, d.name, d.website_url,
+               (SELECT COUNT(*) FROM programs AS p WHERE p.department_id = d.id)
+                   AS program_count
+        FROM departments AS d
+        WHERE d.institution_id = ?
+        ORDER BY d.name, d.id
+        """,
+        (institution_id,),
+    ).fetchall()
+
+
+def _institution_from_row(row: sqlite3.Row, state: tuple[str | None, bool]) -> Institution:
+    return Institution(
+        id=int(row["id"]),
+        name=str(row["name"]),
+        country=_row_text(row["country"]),
+        website_url=_row_text(row["website_url"]),
+        program_count=int(row["program_count"]),
+        department_count=int(row["department_count"]),
+        last_checked_at=state[0],
+        stale=state[1],
+    )
+
+
+def _department_from_row(row: sqlite3.Row, state: tuple[str | None, bool]) -> Department:
+    return Department(
+        id=int(row["id"]),
+        institution_id=int(row["institution_id"]),
+        name=str(row["name"]),
+        website_url=_row_text(row["website_url"]),
+        program_count=int(row["program_count"]),
+        last_checked_at=state[0],
+        stale=state[1],
+    )
+
+
+def _cache_states(
+    connection: sqlite3.Connection, entity_type: str, entity_ids: Sequence[int], *, now: datetime
+) -> dict[int, tuple[str | None, bool]]:
+    """Latest check time and staleness for each entity, from its cache entries.
+
+    No entry means the row was never verified, so it is stale (never "fresh
+    because we have nothing to say"). One failed entry makes the level stale,
+    matching how a program is judged.
+    """
+
+    if not entity_ids:
+        return {}
+    entries = cache.entries_for_entities(
+        connection, entity_type=entity_type, entity_ids=tuple(entity_ids)
+    )
+    states: dict[int, tuple[str | None, bool]] = {}
+    for entity_id in entity_ids:
+        entity_entries = entries.get(entity_id, ())
+        if not entity_entries:
+            states[entity_id] = (None, True)
+            continue
+        latest = max(entry.checked_at for entry in entity_entries)
+        states[entity_id] = (
+            cache.to_timestamp(latest),
+            any(entry.is_stale(now) for entry in entity_entries),
+        )
+    return states
 
 
 # --------------------------------------------------------------------------- #
@@ -949,21 +1389,13 @@ def _all_program_ids(connection: sqlite3.Connection) -> tuple[int, ...]:
     return tuple(int(row["id"]) for row in rows)
 
 
-def _offline_program_ids(connection: sqlite3.Connection, query: ProgramQuery) -> tuple[int, ...]:
-    """Match a normalised query against the cache, without any source.
+def _program_rows(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every cached program with the joined names filters match against."""
 
-    Country and degree level are equality matches; department and research area
-    accept a substring so "Physics" finds "Department of Physics". The department
-    filter also matches the institution name, so `--department oxford` finds
-    Oxford programs whose department is named differently. A NULL field never
-    matches a stated filter: unknown is not the same as a confirmed value.
-    """
-
-    if query.is_empty():
-        return _all_program_ids(connection)
-    rows = connection.execute(
+    return connection.execute(
         """
-        SELECT p.id, p.country, p.degree_level, p.research_areas_json,
+        SELECT p.id, p.name, p.country, p.degree_level, p.research_areas_json,
+               p.institution_id, p.department_id,
                i.name AS institution_name, d.name AS department_name
         FROM programs AS p
         LEFT JOIN institutions AS i ON i.id = p.institution_id
@@ -971,30 +1403,78 @@ def _offline_program_ids(connection: sqlite3.Connection, query: ProgramQuery) ->
         ORDER BY p.name, p.id
         """
     ).fetchall()
-    matches: list[int] = []
-    for row in rows:
-        if query.country is not None and not _same_text(row["country"], query.country):
-            continue
-        if query.department is not None and not (
-            _contains_text(row["department_name"], query.department)
-            or _contains_text(row["institution_name"], query.department)
-        ):
-            continue
-        if query.degree_level is not None and not _same_text(
-            row["degree_level"], query.degree_level
-        ):
-            continue
-        if query.research_area is not None and not any(
-            query.research_area in area.casefold()
-            for area in _json_tuple(row["research_areas_json"])
-        ):
-            continue
-        matches.append(int(row["id"]))
-    return tuple(matches)
+
+
+def _program_matches(
+    row: sqlite3.Row,
+    *,
+    research_area: str | None = None,
+    country: str | None = None,
+    department: str | None = None,
+    degree_level: str | None = None,
+    institution_id: int | None = None,
+    department_id: int | None = None,
+) -> bool:
+    """True when a cached row satisfies every stated filter.
+
+    Country and degree level are equality matches; department and research area
+    accept a substring. The department filter also matches the institution name.
+    A NULL field never matches a stated filter: unknown is not a confirmed value.
+    """
+
+    if institution_id is not None and row["institution_id"] != institution_id:
+        return False
+    if department_id is not None and row["department_id"] != department_id:
+        return False
+    if country is not None and not _same_text(row["country"], country):
+        return False
+    if department is not None and not (
+        _contains_text(row["department_name"], department)
+        or _contains_text(row["institution_name"], department)
+    ):
+        return False
+    if degree_level is not None and not _same_degree(row["degree_level"], degree_level):
+        return False
+    if research_area is not None:
+        return any(
+            research_area in area.casefold() for area in _json_tuple(row["research_areas_json"])
+        )
+    return True
+
+
+def _offline_program_ids(connection: sqlite3.Connection, query: ProgramQuery) -> tuple[int, ...]:
+    """Match a normalised query against the cache, without any source.
+
+    Shares :func:`_program_matches` with the browse reads, so an offline search
+    and a browse screen can never disagree about what a filter means.
+    """
+
+    if query.is_empty():
+        return _all_program_ids(connection)
+    return tuple(
+        int(row["id"])
+        for row in _program_rows(connection)
+        if _program_matches(
+            row,
+            research_area=query.research_area,
+            country=query.country,
+            department=query.department,
+            degree_level=query.degree_level,
+        )
+    )
 
 
 def _same_text(value: Any, wanted: str) -> bool:
     return value is not None and cache.normalise_text(str(value)) == wanted
+
+
+def _same_degree(value: Any, wanted: str) -> bool:
+    """Compare stored degree text and a normalised filter by their canonical token."""
+
+    if value is None:
+        return False
+    canonical = normalise_degree_level(str(value))
+    return canonical is not None and cache.normalise_text(canonical) == wanted
 
 
 def _contains_text(value: Any, wanted: str) -> bool:
@@ -1059,6 +1539,10 @@ def _load_programs(
                 name=str(row["name"]),
                 institution=_row_text(row["institution_name"]),
                 department=_row_text(row["department_name"]),
+                institution_id=(
+                    None if row["institution_id"] is None else int(row["institution_id"])
+                ),
+                department_id=(None if row["department_id"] is None else int(row["department_id"])),
                 country=_row_text(row["country"]),
                 opportunity_type=_row_text(row["opportunity_type"]),
                 degree_level=_row_text(row["degree_level"]),

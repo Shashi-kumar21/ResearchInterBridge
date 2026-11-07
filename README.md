@@ -150,15 +150,28 @@ if the database cannot be opened.
 | `GET` | `/api/facts` | cookie | fact candidates grouped by field, conflicts flagged |
 | `PATCH` | `/api/facts/{id}` | cookie | confirm (optional correction) or reject one candidate |
 | `POST` | `/api/facts/apply` | cookie | copy confirmed facts into blank profile fields |
+| `GET` | `/api/research/programs` | cookie | browse cached programs (`area`, `country`, `department`, `degree_level`, `institution_id`, `department_id`, `limit`, `offset`) |
+| `GET` | `/api/research/programs/{id}` | cookie | one cached program; `404 program_missing` |
+| `GET` | `/api/research/institutions` | cookie | cached institutions with program/department counts (`country`, paging) |
+| `GET` | `/api/research/institutions/{id}/departments` | cookie | cached departments of one institution; `404 institution_missing` |
 
 Every failure has the same shape, `{"error": {"code", "message"}}`, with stable
 codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
 (409), `invalid_session` (401), `consent_required` (403), `invalid_request`
 (422), `rate_limited` (429), `deletion_incomplete` (409), `profile_missing`
 (404), `fact_missing` (404), `invalid_profile` (400), `document_missing` (404),
-`document_too_large` (413), `unsupported_document` (415) and
-`document_unreadable` (422). A rejected request body never echoes its values, so
-a bad password is not reflected back or written to the caller's logs.
+`document_too_large` (413), `unsupported_document` (415),
+`document_unreadable` (422), `program_missing` (404), `institution_missing`
+(404) and `discovery_unavailable` (503). A rejected request body never echoes
+its values, so a bad password is not reflected back or written to the caller's
+logs.
+
+The `/api/research/*` endpoints are cache-only reads: they never call a source,
+so they work with discovery offline, and a session is still required. Every row
+carries `last_checked_at` and `stale`; a stale row may be shown for orientation
+but must not be treated as verified for outreach or deadline decisions. Filters
+match the same way as `discover --offline`, and an unknown (NULL) stored value
+never matches a stated filter.
 
 Documents are capped at 10 MiB and must be a real PDF, DOCX or plain-text file;
 the extension and the sniffed content must agree. Uploading identical bytes twice

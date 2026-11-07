@@ -443,6 +443,13 @@ source.
 * The offline department filter also matches the institution name, so
   `--department oxford` finds Oxford programs whose department is named
   differently. Country and degree level stay equality matches.
+* The browse reads (`browse_programs`, `browse_institutions`,
+  `browse_departments`) are cache-only: they never accept an adapter and never
+  call a source. They share `_program_matches` with the offline search path, so a
+  filter cannot mean one thing on a screen and another in the CLI. Pagination
+  reports the total matched, and every row carries `last_checked_at` and `stale`.
+  An institution/department row with no cache entry is stale, never assumed
+  fresh; an unknown institution id is a 404 rather than an empty page.
 * Institution and department cache entries are derived from the official program
   page for now and refreshed with it. Their own pages are added with the browse
   hierarchy (§13.2).
@@ -456,12 +463,13 @@ source.
 
 **Consequences:**
 
-* The next slice (4b) adds a concrete adapter and needs the Owner's polite-pool
-  contact email; the adapter can then be tested with mocked HTTP and no real
-  requests.
-* The cache is already queryable offline, so a browse API and the
-  university → department → faculty screens can be layered on these reads
-  without touching the schema.
+* 4b-1 layers the cache-only browse reads and their API on these tables without
+  a schema change. The concrete live adapter is still pending because it needs
+  the Owner's polite-pool contact email; it can then be tested with mocked HTTP
+  and no real requests.
+* The cache is already queryable offline, so the browse API and the
+  university → department → faculty screens reuse these reads instead of
+  duplicating filter rules.
 * The one-day empty-result TTL is a product choice made here; it trades a small
   amount of freshness for not hammering a source with queries that rarely
   change.

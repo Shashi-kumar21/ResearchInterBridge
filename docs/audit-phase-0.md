@@ -203,7 +203,8 @@ optimization) have no predecessor.
 | 2d-3c | Hydration gate on the account forms, `form-action 'none'`, SSR regression tests | merged (PR #14) |
 | 2d-4a | Content API: profile, document upload/parse/delete, fact confirm/apply | merged (PR #15, ADR-014) |
 | 2d-4b | Onboarding/profile, document upload/list and fact-review screens | merged (PR #16, ADR-015) |
-| 4a | Shared research cache, program validation/provenance, offline `discover` | this PR (ADR-016) |
+| 4a | Shared research cache, program validation/provenance, offline `discover` | merged (PR #17, ADR-016) |
+| 4b-1 | Cache-only browse reads + research API (programs, institutions, departments) | this PR (ADR-016) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -515,3 +516,37 @@ makes the existing `register`/`login` safe to expose.
   caching, offline browsing and filtering (indexed and unindexed), batched reads
   under a low SQLite parameter limit in both modules, degree-level identity,
   cross-connection reuse and the CLI paths. Full suite: 506 passed, 2 skipped.
+
+## 20. Phase 4b-1 notes (cache-only browse reads and research API)
+
+* No migration: 4b-1 reads the tables migration 6 already created. A browse
+  request never accepts an adapter, so it cannot call a source (§13.2.2/5).
+* `browse_programs`, `browse_institutions` and `browse_departments` live in
+  `discovery.py` next to the search path. The offline search and the browse
+  filters share `_program_matches`, so country/degree equality, department/area
+  substring matching and "NULL never matches" cannot drift between CLI and API.
+* Pagination is explicit (`limit` 1–100, default 25, `offset` ≥ 0) and each
+  page reports the total the filters matched. Sorting is by name, then id, so a
+  page is stable across calls.
+* Every program already carried `last_checked_at`/`stale`. Institutions and
+  departments now derive the same pair from their cache entries; no entry means
+  stale, never "fresh because unknown". A failed refresh marks the derived
+  institution/department entry too (4a behaviour).
+* Degree levels are canonicalised (`MSc`, `Master of Science` → `master`) in
+  validation and in the filter, so identity, the stored value and the filter
+  agree. An unrecognised label keeps its own text instead of being forced into
+  an "other" bucket.
+* API additions: four authenticated, `Cache-Control: no-store` routes under
+  `/api/research`. `DiscoveryError` maps to 400, except `program_missing` and
+  `institution_missing` (404) and `discovery_unavailable` (503). The browse
+  routes do not raise the last one, but the mapping exists so a later search
+  route cannot turn a missing adapter into a 500.
+* Tests: 30 new (`tests/test_browse.py`, `tests/test_api_research.py`) covering
+  paging and totals, every filter and their AND semantics, unknown-value
+  exclusion, page-bound validation, program/institution 404s, institution
+  counts, department scoping, empty pages, staleness at all three levels,
+  adapter-free reading, canonical degree values, session requirement, query
+  params and the error envelope. Full suite: 536 passed, 2 skipped.
+* Blocked for 4b-3: the concrete live adapter still needs the Owner's
+  polite-pool contact email and provider choice. 4b-2 (web screens) can proceed
+  against these read-only endpoints.

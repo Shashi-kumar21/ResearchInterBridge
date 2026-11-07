@@ -164,3 +164,15 @@ class DiscoveryUnavailableError(DiscoveryError):
     """
 
     code = "discovery_unavailable"
+
+
+class ProgramNotFoundError(DiscoveryError):
+    """Raised when a program id is not in the shared cache."""
+
+    code = "program_missing"
+
+
+class InstitutionNotFoundError(DiscoveryError):
+    """Raised when an institution id is not in the shared cache."""
+
+    code = "institution_missing"
