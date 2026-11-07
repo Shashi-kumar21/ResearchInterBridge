@@ -12,6 +12,7 @@ Commands:
 * ``consent-status``   - show the consent ledger for a user.
 * ``register``         - create an account (password is prompted, never an argument).
 * ``login`` / ``logout`` / ``whoami`` - manage the local session file.
+* ``discover``          - query cached research programs (cache-only by default in 4a).
 * ``serve``            - run the JSON API with uvicorn.
 """
 
@@ -27,12 +28,14 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from . import auth, consent, db, documents, facts, parsing, profiles
+from . import auth, consent, db, discovery, documents, facts, parsing, profiles
 from .config import Settings, load_settings
 from .errors import (
     AuthError,
+    CacheError,
     ConfigError,
     ConsentError,
+    DiscoveryError,
     DocumentError,
     MigrationError,
     ProfileError,
@@ -146,6 +149,20 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("logout", help="Revoke the local session and delete the file.")
     subparsers.add_parser("whoami", help="Show the signed-in user.")
 
+    discover = subparsers.add_parser(
+        "discover", help="Search cached research programs, with provenance."
+    )
+    discover.add_argument("--area", dest="research_area", help="Research area to look for.")
+    discover.add_argument("--country", help="Country of the institution or program.")
+    discover.add_argument("--department", help="Department or faculty name.")
+    discover.add_argument("--degree-level", help="Degree level, for example master or phd.")
+    discover.add_argument(
+        "--offline",
+        action="store_true",
+        help="Serve only what is already cached; never contact a source.",
+    )
+    discover.add_argument("--json", action="store_true", help="Emit JSON (already the default).")
+
     serve = subparsers.add_parser("serve", help="Run the JSON API with uvicorn.")
     serve.add_argument(
         "--host",
@@ -248,6 +265,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"fact operation failed: {exc}", file=sys.stderr)
             return 1
 
+    if args.command == "discover":
+        try:
+            return _run_discover_command(args, settings)
+        except (CacheError, DiscoveryError) as exc:
+            print(f"discovery error: {exc}", file=sys.stderr)
+            return 1
+        except (OSError, sqlite3.Error) as exc:
+            print(f"discovery operation failed: {exc}", file=sys.stderr)
+            return 1
+
     report = check_health(settings)
     print(json.dumps(report.to_dict(), indent=2))
     return 0 if report.ok else 1
@@ -274,6 +301,35 @@ def _run_serve(args: argparse.Namespace, settings: Settings) -> int:
         log_level=settings.log_level.lower(),
     )
     return 0
+
+
+def _program_payload(program: discovery.Program) -> dict[str, object]:
+    return {
+        "id": program.id,
+        "name": program.name,
+        "institution": program.institution,
+        "department": program.department,
+        "country": program.country,
+        "opportunity_type": program.opportunity_type,
+        "degree_level": program.degree_level,
+        "research_areas": list(program.research_areas),
+        "official_url": program.official_url,
+        "evidence_urls": list(program.evidence_urls),
+        "eligibility": list(program.eligibility),
+        "application_method": program.application_method,
+        "opening_date": program.opening_date,
+        "closing_date": program.closing_date,
+        "start_date": program.start_date,
+        "duration": program.duration,
+        "stipend": program.stipend,
+        "tuition": program.tuition,
+        "accommodation": program.accommodation,
+        "required_documents": list(program.required_documents),
+        "status": program.status,
+        "confidence": program.confidence,
+        "last_checked_at": program.last_checked_at,
+        "stale": program.stale,
+    }
 
 
 def _document_payload(record: documents.DocumentRecord) -> dict[str, object]:
@@ -474,6 +530,37 @@ def _run_consent_command(args: argparse.Namespace, settings: Settings) -> int:
         )
         print(json.dumps({"granted": granted, "kind": args.kind}, indent=2))
         return 0
+
+
+def _run_discover_command(args: argparse.Namespace, settings: Settings) -> int:
+    """Query the shared cache; ``--offline`` never contacts a source."""
+
+    with db.session(settings.database_path) as connection:
+        db.apply_migrations(connection)
+        result = discovery.search_programs(
+            connection,
+            discovery.ProgramQuery(
+                research_area=args.research_area,
+                country=args.country,
+                department=args.department,
+                degree_level=args.degree_level,
+            ),
+            offline=args.offline,
+            actor="cli",
+        )
+    print(
+        json.dumps(
+            {
+                "query": result.query.as_dict(),
+                "served_from_cache": result.served_from_cache,
+                "stale": result.stale,
+                "message": result.message,
+                "programs": [_program_payload(program) for program in result.programs],
+            },
+            indent=2,
+        )
+    )
+    return 0
 
 
 def _run_auth_command(args: argparse.Namespace, settings: Settings) -> int:

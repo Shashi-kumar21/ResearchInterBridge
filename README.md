@@ -55,6 +55,7 @@ py -3.11 -m research_inter_bridge document-list --user-id 1
 py -3.11 -m research_inter_bridge fact-list --user-id 1
 py -3.11 -m research_inter_bridge fact-confirm --user-id 1 --fact-id 3 --value "9.1/10"
 py -3.11 -m research_inter_bridge fact-apply --user-id 1
+py -3.11 -m research_inter_bridge discover --offline --country Germany
 py -3.11 -m research_inter_bridge logout
 ```
 
@@ -104,6 +105,17 @@ candidate rejects the competing pending ones for that field. `fact-apply` copies
 confirmed facts into the profile: blank fields are filled, values the student
 typed are kept unless `--overwrite` is passed. Graduation **year** facts are
 never turned into a date, because that would invent a day and month.
+
+`discover` reads the shared research cache (`task.md` §13, ADR-016). Each program
+is printed with its official URL, source URLs, `last_checked_at` and a `stale`
+flag; unknown deadlines, funding or degree level stay `null` instead of being
+guessed. The cache holds public research data only and is shared across students.
+This slice ships no live source adapter yet: `--offline` browses what is cached
+and matches the filters against the local cache, so a filter works even when that
+exact query never reached a source. An online query without an adapter exits `1`
+with an actionable message. A fresh query makes no network call; a stale entry is
+refreshed on demand, and a failed refresh keeps the previous record marked stale
+and is not retried for an hour.
 
 ## HTTP API (`serve`)
 

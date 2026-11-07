@@ -204,6 +204,136 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX IF NOT EXISTS idx_rate_limit_expiry ON rate_limit_counters (expires_at)",
         ),
     ),
+    Migration(
+        version=6,
+        name="research_discovery_cache",
+        statements=(
+            # Public research data only (ADR-007): these tables have no user_id
+            # and are safe to reuse across students. Private rows stay in their
+            # own per-user tables.
+            """
+            CREATE TABLE IF NOT EXISTS institutions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                canonical_key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                country TEXT,
+                website_url TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_institutions_country ON institutions (country, name)",
+            """
+            CREATE TABLE IF NOT EXISTS departments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                institution_id INTEGER NOT NULL REFERENCES institutions (id) ON DELETE CASCADE,
+                canonical_key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                website_url TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_departments_institution "
+            "ON departments (institution_id)",
+            # Nullable dates and funding text are deliberate: NULL means "the
+            # source did not state it", never "false" or an invented value.
+            # `status = 'unverified'` marks a record whose page was not checked.
+            """
+            CREATE TABLE IF NOT EXISTS programs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                canonical_key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                institution_id INTEGER REFERENCES institutions (id) ON DELETE SET NULL,
+                department_id INTEGER REFERENCES departments (id) ON DELETE SET NULL,
+                country TEXT,
+                opportunity_type TEXT,
+                degree_level TEXT,
+                research_areas_json TEXT NOT NULL DEFAULT '[]',
+                official_url TEXT NOT NULL,
+                eligibility_json TEXT NOT NULL DEFAULT '[]',
+                application_method TEXT,
+                opening_date TEXT,
+                closing_date TEXT,
+                start_date TEXT,
+                duration_text TEXT,
+                stipend_text TEXT,
+                tuition_text TEXT,
+                accommodation_text TEXT,
+                required_documents_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'unverified'
+                    CHECK (status IN ('open', 'upcoming', 'closed', 'unverified')),
+                confidence REAL,
+                last_checked_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_programs_country_status ON programs (country, status)",
+            """
+            CREATE TABLE IF NOT EXISTS program_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                program_id INTEGER NOT NULL REFERENCES programs (id) ON DELETE CASCADE,
+                url TEXT NOT NULL,
+                publisher TEXT,
+                kind TEXT NOT NULL DEFAULT 'official_page',
+                fetched_at TEXT NOT NULL,
+                verified_at TEXT,
+                UNIQUE (program_id, url)
+            )
+            """,
+            # One row per cached entity. `canonical_key` is the shared identity;
+            # (entity_type, entity_id) prevents two entries pointing at one row.
+            # `raw_payload_path` must stay outside Git.
+            """
+            CREATE TABLE IF NOT EXISTS research_cache_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_type TEXT NOT NULL
+                    CHECK (entity_type IN
+                        ('institution', 'department', 'program', 'faculty', 'publication')),
+                entity_id INTEGER NOT NULL,
+                canonical_key TEXT NOT NULL UNIQUE,
+                source_url TEXT NOT NULL,
+                fetched_at TEXT NOT NULL,
+                verified_at TEXT,
+                ttl_seconds INTEGER NOT NULL CHECK (ttl_seconds > 0),
+                content_hash TEXT NOT NULL,
+                http_status INTEGER,
+                adapter TEXT NOT NULL,
+                parser_version TEXT NOT NULL,
+                raw_payload_path TEXT,
+                last_attempt_at TEXT NOT NULL,
+                last_error TEXT,
+                UNIQUE (entity_type, entity_id)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_cache_entries_type
+                ON research_cache_entries (entity_type, verified_at)
+            """,
+            # A normalised query fingerprint resolves to the ids of the records
+            # it produced, so an identical query never reaches the network while
+            # its entries are fresh.
+            """
+            CREATE TABLE IF NOT EXISTS research_query_index (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fingerprint TEXT NOT NULL UNIQUE,
+                entity_type TEXT NOT NULL,
+                research_area TEXT,
+                country TEXT,
+                department TEXT,
+                degree_level TEXT,
+                entity_ids_json TEXT NOT NULL DEFAULT '[]',
+                -- Only set for an empty result set: a "no programs" answer is
+                -- cached briefly so a repeated query does not hammer the source.
+                -- Non-empty freshness is governed by each record's TTL.
+                expires_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+        ),
+    ),
 )
 
 
