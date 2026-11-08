@@ -102,10 +102,12 @@ export const CAPABILITIES: readonly Capability[] = [
     id: "discovery",
     title: "Research discovery",
     detail:
-      "University → department → faculty browse with a source link, a " +
-      "last-checked timestamp and an offline cache, so a repeated query is served " +
-      "from the database instead of hammering public sources.",
-    status: "planned",
+      "Browse cached universities, departments and programs on this site, with " +
+      "a source link, a last-checked date and a stale flag. Browsing reads the " +
+      "shared cache without contacting a source, so it still works offline. A " +
+      "live source adapter and faculty records are still to come; a stale row is " +
+      "orientation only, never verified for outreach or a deadline decision.",
+    status: "in-progress",
     surface: "web",
   },
   {

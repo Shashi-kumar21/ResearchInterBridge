@@ -405,3 +405,157 @@ export function applyFacts(input: FactApplyInput = {}): Promise<FactApplyResult>
     body: { fields: input.fields ?? null, overwrite: input.overwrite ?? false },
   });
 }
+
+// --------------------------------------------------------------------------- //
+// research browsing (§13.2)
+// --------------------------------------------------------------------------- //
+
+/**
+ * A cached program. Every field mirrors the API row, including `stale`: a stale
+ * record may be shown for orientation but must not be treated as verified for
+ * outreach or deadline decisions. `null` means the source did not state it.
+ */
+export interface ResearchProgram {
+  readonly id: number;
+  readonly name: string;
+  readonly institution: string | null;
+  readonly institution_id: number | null;
+  readonly department: string | null;
+  readonly department_id: number | null;
+  readonly country: string | null;
+  readonly opportunity_type: string | null;
+  readonly degree_level: string | null;
+  readonly research_areas: readonly string[];
+  readonly official_url: string;
+  readonly evidence_urls: readonly string[];
+  readonly eligibility: readonly string[];
+  readonly application_method: string | null;
+  readonly opening_date: string | null;
+  readonly closing_date: string | null;
+  readonly start_date: string | null;
+  readonly duration: string | null;
+  readonly stipend: string | null;
+  readonly tuition: string | null;
+  readonly accommodation: string | null;
+  readonly required_documents: readonly string[];
+  readonly status: string;
+  readonly confidence: number | null;
+  readonly last_checked_at: string | null;
+  readonly stale: boolean;
+}
+
+export interface ResearchProgramPage {
+  readonly programs: readonly ResearchProgram[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+export interface ResearchInstitution {
+  readonly id: number;
+  readonly name: string;
+  readonly country: string | null;
+  readonly website_url: string | null;
+  readonly program_count: number;
+  readonly department_count: number;
+  readonly last_checked_at: string | null;
+  readonly stale: boolean;
+}
+
+export interface ResearchInstitutionPage {
+  readonly institutions: readonly ResearchInstitution[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+export interface ResearchDepartment {
+  readonly id: number;
+  readonly institution_id: number;
+  readonly name: string;
+  readonly website_url: string | null;
+  readonly program_count: number;
+  readonly last_checked_at: string | null;
+  readonly stale: boolean;
+}
+
+export interface ResearchDepartmentPage {
+  readonly institution: ResearchInstitution;
+  readonly departments: readonly ResearchDepartment[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+export interface ResearchProgramFilters {
+  readonly area?: string;
+  readonly country?: string;
+  readonly department?: string;
+  readonly degree_level?: string;
+  readonly institution_id?: number;
+  readonly department_id?: number;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export interface ResearchInstitutionFilters {
+  readonly country?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+/** Build a query string, omitting empty filters instead of sending `?country=`. */
+export function researchQuery(
+  values: Readonly<Record<string, string | number | undefined>>,
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined || value === "") {
+      continue;
+    }
+    search.set(key, String(value));
+  }
+  const encoded = search.toString();
+  return encoded ? `?${encoded}` : "";
+}
+
+export function listResearchPrograms(
+  filters: ResearchProgramFilters = {},
+): Promise<ResearchProgramPage> {
+  const query = researchQuery({
+    area: filters.area,
+    country: filters.country,
+    department: filters.department,
+    degree_level: filters.degree_level,
+    institution_id: filters.institution_id,
+    department_id: filters.department_id,
+    limit: filters.limit,
+    offset: filters.offset,
+  });
+  return request<ResearchProgramPage>(`/api/research/programs${query}`);
+}
+
+export function getResearchProgram(programId: number): Promise<ResearchProgram> {
+  return request<ResearchProgram>(`/api/research/programs/${programId}`);
+}
+
+export function listResearchInstitutions(
+  filters: ResearchInstitutionFilters = {},
+): Promise<ResearchInstitutionPage> {
+  const query = researchQuery({
+    country: filters.country,
+    limit: filters.limit,
+    offset: filters.offset,
+  });
+  return request<ResearchInstitutionPage>(`/api/research/institutions${query}`);
+}
+
+export function listInstitutionDepartments(
+  institutionId: number,
+  filters: { readonly limit?: number; readonly offset?: number } = {},
+): Promise<ResearchDepartmentPage> {
+  const query = researchQuery({ limit: filters.limit, offset: filters.offset });
+  return request<ResearchDepartmentPage>(
+    `/api/research/institutions/${institutionId}/departments${query}`,
+  );
+}

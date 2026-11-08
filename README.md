@@ -4,12 +4,14 @@ Local-first assistant that helps students find international research
 internships, identify relevant professors and papers, prepare evidence-backed
 outreach, and send approved email through connected accounts.
 
-Status: **Phase 2 — auth, profile, documents, JSON API and the web screens**.
-Accounts, consent, sessions, profiles, document ingestion (PDF/DOCX/TXT),
-candidate-fact confirmation and apply-to-profile work from the CLI and the HTTP
-API, and the Next.js site in `web/` can register, sign in, edit the profile,
-upload a document and review facts. Research discovery, OAuth and sending are
-not implemented yet, and nothing in this repository can send email.
+Status: **Phase 4 — auth, profile, documents, research cache and the web
+screens**. Accounts, consent, sessions, profiles, document ingestion
+(PDF/DOCX/TXT), candidate-fact confirmation, apply-to-profile and cache-only
+research browsing work from the CLI and the HTTP API, and the Next.js site in
+`web/` can register, sign in, edit the profile, upload a document, review facts
+and browse cached institutions, departments and programs. A live discovery
+adapter, OAuth and sending are not implemented yet, and nothing in this
+repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
 * License: MIT (see `LICENSE`), decided by the Owner on 2026-11-02.
@@ -210,7 +212,7 @@ cookie is still sent). For automatic reload during development:
 uvicorn research_inter_bridge.api:create_app --factory --reload --port 8000
 ```
 
-Not implemented yet: OAuth and email sending.
+Not implemented yet: the live discovery adapter, OAuth and email sending.
 
 ## Checks
 
@@ -232,9 +234,12 @@ tests never call live APIs and never send email.
 
 ## Frontend (`web/`)
 
-Next.js + TypeScript (ADR-010/ADR-013/ADR-015): the landing page plus register,
-sign in, consent, onboarding/profile, documents and fact-review screens that
-talk to the JSON API.
+Next.js + TypeScript (ADR-010/ADR-013/ADR-015/ADR-016): the landing page plus
+register, sign in, consent, onboarding/profile, documents, fact-review and
+research-browse screens that talk to the JSON API. The research screen reads
+`/api/research/*` only, so it cannot contact a source: it drills from
+institution to department to program, keeps each row's source link and
+last-checked date, and labels a stale row "orientation only".
 
 ```powershell
 # terminal 1: API with the site's origin allowed and a session cookie
@@ -285,7 +290,7 @@ src/research_inter_bridge/    Python package
   api/                        FastAPI app: sessions, CORS, consent and account routes
   cli.py / __main__.py        migrate, health, serve, auth, consent, document and fact commands
 tests/                        pytest suite (offline, synthetic data only)
-web/                          Next.js + TypeScript site (landing, account and content screens)
+web/                          Next.js + TypeScript site (landing, account, content and research screens)
 web/lib/api.ts                typed browser client for the JSON API
 web/lib/roadmap.ts            capability/limit/workflow data the page renders
 docs/                         audit report, decisions, architecture notes

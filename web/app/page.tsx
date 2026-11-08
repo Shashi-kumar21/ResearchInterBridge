@@ -61,8 +61,8 @@ export default function HomePage() {
           </div>
           <p className="note">
             This is an early build. You can create an account, sign in, fill in your profile,
-            upload a CV or transcript and confirm the facts extracted from it on this site today.
-            Nothing in the repository can send email.
+            upload a CV or transcript, confirm the facts extracted from it and browse the shared
+            research cache on this site today. Nothing in the repository can send email.
           </p>
         </section>
 
