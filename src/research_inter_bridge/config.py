@@ -31,6 +31,11 @@ DEFAULT_SESSION_COOKIE_NAME = "rib_session"
 #: Cookie names are restricted to RFC 6265 token characters.
 _COOKIE_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
+#: A deliberately small email check: the value is printed in a User-Agent and
+#: sent in a `From` header, so it must be one address, never a display name or a
+#: list. Real delivery is not attempted, so no MX lookup belongs here.
+_CONTACT_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
 
 def _setting_name(key: str) -> str:
     return f"{ENV_PREFIX}{key.upper()}"
@@ -53,6 +58,10 @@ class Settings:
         cookie_secure: Send the session cookie with the ``Secure`` flag. Must be
             enabled whenever the API is served over HTTPS.
         session_cookie_name: Name of the HttpOnly session cookie.
+        research_contact_email: Contact address included in the User-Agent and
+            ``From`` header when a live research source is fetched. ``None``
+            means live source access is unavailable; parsing and offline
+            browsing still work.
     """
 
     database_path: Path = DEFAULT_DATABASE_PATH
@@ -63,6 +72,7 @@ class Settings:
     cors_origins: tuple[str, ...] = ()
     cookie_secure: bool = False
     session_cookie_name: str = DEFAULT_SESSION_COOKIE_NAME
+    research_contact_email: str | None = None
 
     def __post_init__(self) -> None:
         if self.log_level not in LOG_LEVELS:
@@ -82,6 +92,13 @@ class Settings:
                 f"{_setting_name('session_cookie_name')} must be a cookie token "
                 f"(letters, digits and !#$%&'*+-.^_`|~); got {self.session_cookie_name!r}."
             )
+        contact = (self.research_contact_email or "").strip() or None
+        if contact is not None and not _CONTACT_EMAIL_RE.match(contact):
+            raise ConfigError(
+                f"{_setting_name('research_contact_email')} must be one email address "
+                f"(for example research@example.org), got {contact!r}."
+            )
+        object.__setattr__(self, "research_contact_email", contact)
         # Scheme and host are case-insensitive (RFC 3986 §3.2.2, RFC 7230 §2.7),
         # but a browser sends the origin in lowercase. Normalising here means the
         # guard compares like with like instead of rejecting a valid request just
@@ -118,6 +135,7 @@ class Settings:
             session_cookie_name=_read_text(
                 source, "SESSION_COOKIE_NAME", DEFAULT_SESSION_COOKIE_NAME
             ),
+            research_contact_email=_read_raw(source, "RESEARCH_CONTACT_EMAIL"),
         )
 
 

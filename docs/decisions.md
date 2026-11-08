@@ -472,9 +472,10 @@ source.
 **Consequences:**
 
 * 4b-1 layers the cache-only browse reads and their API on these tables without
-  a schema change, and 4b-2 renders them in the browser. The concrete live
-  adapter is still pending because it needs the Owner's polite-pool contact
-  email; it can then be tested with mocked HTTP and no real requests.
+  a schema change, and 4b-2 renders them in the browser. 4b-3a adds the polite
+  HTTP and explicit-page parsing boundary (ADR-017): it still makes no live
+  request without a configured contact address, and the adapter object that
+  writes its records into this cache is the next slice.
 * The cache is already queryable offline, so the browse API and the
   university → department → faculty screens reuse these reads instead of
   duplicating filter rules.
@@ -483,3 +484,50 @@ source.
   change.
 * The bucket-of-three rule (§13.4) governs personalised result sets in Phase 6.
   Public program/faculty records are shared by design and are not gated by it.
+
+## ADR-017 — Live sources are fetched politely, parsed only from explicit data
+
+**Status:** accepted 2026-11-08 · **Decided by:** Dev (within ADR-016) · **Spec:** `task.md` §3.4, §8, §13.3
+
+The cache and browse screens exist, but a live adapter still has no network
+boundary. Two failure modes had to be closed before any provider code: an
+anonymous scraper that a university cannot contact or rate-limit, and a parser
+that turns prose into a deadline. OpenAlex was the suggested provider, but it
+indexes institutions, authors and works, not internships; treating it as a
+program source would fabricate records that `task.md` §3.4 does not allow.
+
+**Decision:** ship a provider-agnostic polite HTTP boundary and one explicit page
+format, with no live calls until an operator configures a contact address.
+
+* `http_source.PoliteHttpClient` sends a descriptive `User-Agent`
+  (`ResearchInterBridge/<version> (+mailto:<contact>)`) and the same address in
+  `From`. Constructing it requires `RIB_RESEARCH_CONTACT_EMAIL`; a live fetch
+  without a reachable contact is a configuration error before the first request.
+* Only `http`/`https`, no embedded credentials, one GET, a timeout
+  (`RIB_REQUEST_TIMEOUT_SECONDS`), a 2 MiB body cap and no cross-scheme redirect.
+  A non-2xx response or an oversized body raises `SourceFetchError` naming the
+  host and status; the body is never included in the message.
+* Tests inject a transport, so the suite never opens a socket and CI stays
+  offline (§8).
+* `program_pages` reads only schema.org JSON-LD blocks typed
+  `EducationalOccupationalProgram` or `JobPosting`. A field the page does not
+  state stays `None`, status starts `unverified` and confidence is unscored.
+  Supported dates must be ISO dates; prose such as "15 January 2027" is ignored.
+  `Course` is excluded because it is not evidence of a research placement.
+* Configured `ProgramPageSource` records supply the institution (and optional
+  country/department). They are operator configuration, never inferred from a
+  hostname.
+* Pages are read sequentially. A failed page raises instead of returning a
+  partial tuple, so the caller can mark the refresh failed rather than present
+  half a result as complete.
+
+**Consequences:**
+
+* OpenAlex remains a Phase 5 scholarly source for faculty and publications; it is
+  not wired into program discovery. Phase 4 needs official university/department
+  pages, which the operator configures.
+* Query filtering, cache writes and the adapter object that connects
+  `program_pages` to `discovery.search_programs` are still to come. They must
+  reuse `discovery`'s existing match rule rather than introduce a second one.
+* The contact address is a deployment value, not a student value. `.env.example`
+  leaves it blank, so a fresh checkout cannot contact a source by accident.

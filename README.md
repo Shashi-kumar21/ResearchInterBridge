@@ -9,8 +9,9 @@ screens**. Accounts, consent, sessions, profiles, document ingestion
 (PDF/DOCX/TXT), candidate-fact confirmation, apply-to-profile and cache-only
 research browsing work from the CLI and the HTTP API, and the Next.js site in
 `web/` can register, sign in, edit the profile, upload a document, review facts
-and browse cached institutions, departments and programs. A live discovery
-adapter, OAuth and sending are not implemented yet, and nothing in this
+and browse cached institutions, departments and programs. Discovery has a polite
+HTTP and explicit-page parsing boundary (ADR-017) but no adapter is wired into a
+live query yet. OAuth and sending are not implemented, and nothing in this
 repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
@@ -41,6 +42,12 @@ Copy-Item .env.example .env       # optional; every value has a safe default
 `.env` is git-ignored. Real environment variables always win over `.env`.
 Never put OAuth tokens, client secrets or student documents in `.env`, source
 code or commits.
+
+A live research fetch needs a reachable operator address:
+`RIB_RESEARCH_CONTACT_EMAIL` is sent in the `User-Agent` and `From` headers
+(ADR-017). It is blank by default, so a fresh checkout cannot contact a source;
+offline browsing and the parser tests still work. It must be an operational
+address, never a student's.
 
 ## Run
 
@@ -118,6 +125,14 @@ exact query never reached a source. An online query without an adapter exits `1`
 with an actionable message. A fresh query makes no network call; a stale entry is
 refreshed on demand, and a failed refresh keeps the previous record marked stale
 and is not retried for an hour.
+
+The live-source boundary is `http_source.py` plus `program_pages.py` (ADR-017).
+It performs one GET per configured official page with a contact-bearing
+`User-Agent`, a timeout, a 2 MiB cap and an HTTPS/HTTP-only rule, then accepts
+only schema.org JSON-LD typed `EducationalOccupationalProgram` or `JobPosting`.
+A field the page does not state stays `None`; prose deadlines are not parsed.
+The adapter that turns those records into a `discover` query is not wired yet,
+so no command contacts a source even when the contact address is set.
 
 ## HTTP API (`serve`)
 
@@ -212,7 +227,8 @@ cookie is still sent). For automatic reload during development:
 uvicorn research_inter_bridge.api:create_app --factory --reload --port 8000
 ```
 
-Not implemented yet: the live discovery adapter, OAuth and email sending.
+Not implemented yet: the adapter that wires official pages into `discover`,
+OAuth and email sending.
 
 ## Checks
 
@@ -287,6 +303,9 @@ src/research_inter_bridge/    Python package
   documents.py                upload validation, hash-named storage, per-user isolation
   parsing.py                  PDF/DOCX/TXT text extraction with bounded limits
   facts.py                    fact extraction + confirm/reject/conflict workflow
+  discovery.py                source-agnostic program cache, filters, browse reads
+  http_source.py              polite contact-bearing HTTP GET boundary (ADR-017)
+  program_pages.py            explicit schema.org JSON-LD program parser
   api/                        FastAPI app: sessions, CORS, consent and account routes
   cli.py / __main__.py        migrate, health, serve, auth, consent, document and fact commands
 tests/                        pytest suite (offline, synthetic data only)
