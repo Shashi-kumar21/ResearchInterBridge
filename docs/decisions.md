@@ -453,6 +453,14 @@ source.
 * Institution and department cache entries are derived from the official program
   page for now and refreshed with it. Their own pages are added with the browse
   hierarchy (§13.2).
+* 4b-2 renders that hierarchy in the web client: institution → department →
+  program, with country/degree/area filters, explicit paging and a stale badge at
+  every level. The screen calls only `/api/research/*`, so browsing cannot
+  trigger a source fetch; a detail panel re-reads one program instead of trusting
+  a list row. An unstated field is rendered as "Not stated", and a stale row
+  says it is orientation only, not verified for outreach or a deadline decision.
+  The page stays cache-only for the same reason the API is: discovery must work
+  when a source is unreachable, and no screen may invent a record.
 * A program the source stops listing stays in the cache: it remains browsable
   offline (stale after its TTL) but is never presented as verified. 4a does not
   tombstone or delete it, because a partial or failed refresh must not remove
@@ -464,9 +472,9 @@ source.
 **Consequences:**
 
 * 4b-1 layers the cache-only browse reads and their API on these tables without
-  a schema change. The concrete live adapter is still pending because it needs
-  the Owner's polite-pool contact email; it can then be tested with mocked HTTP
-  and no real requests.
+  a schema change, and 4b-2 renders them in the browser. The concrete live
+  adapter is still pending because it needs the Owner's polite-pool contact
+  email; it can then be tested with mocked HTTP and no real requests.
 * The cache is already queryable offline, so the browse API and the
   university → department → faculty screens reuse these reads instead of
   duplicating filter rules.

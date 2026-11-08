@@ -131,11 +131,23 @@ describe("capability model", () => {
       expect(surfaceLabel(capability as Capability)).toMatch(/^Available on: /);
     }
   });
+
+  it("says research browsing is in progress, not finished", () => {
+    // The cache browse screen really runs, but the live adapter and faculty
+    // records do not, so the honest status is in progress rather than available.
+    const discovery = CAPABILITIES.find((capability) => capability.id === "discovery");
+
+    expect(discovery?.status).toBe("in-progress");
+    expect(discovery?.surface).toBe("web");
+    expect(discovery?.detail).toMatch(/cache/i);
+    expect(discovery?.detail).toMatch(/adapter/i);
+    expect(surfaceLabel(discovery as Capability)).toBe("In progress on: the website");
+  });
 });
 
 describe("summaryCounts", () => {
   it("counts each status", () => {
-    expect(summaryCounts()).toEqual({ available: 5, inProgress: 0, planned: 6 });
+    expect(summaryCounts()).toEqual({ available: 5, inProgress: 1, planned: 5 });
   });
 
   it("counts the whole list", () => {

@@ -1,8 +1,9 @@
 # ResearchInterBridge — web
 
 Next.js + TypeScript site for the public product (`task.md` §5, ADR-010,
-ADR-013, ADR-015). It ships a landing page plus register, sign-in, consent,
-profile, document and fact-review screens that call the Python JSON API.
+ADR-013, ADR-015, ADR-016). It ships a landing page plus register, sign-in,
+consent, profile, document, fact-review and research-browse screens that call
+the Python JSON API.
 
 ```powershell
 # from the repository root, first
@@ -33,10 +34,12 @@ Node: `package.json` declares the real floor, `^22.13.0 || ^24.0.0 || >=26.0.0`
 | `/onboarding` | Loads the profile, treats `404 profile_missing` as a new form, saves the whole profile with `PUT`, and shows the server's completeness percentage and missing labels. |
 | `/documents` | Lists documents, uploads multipart PDF/DOCX/TXT, extracts facts, and deletes after a confirmation. A failed parse is kept and shown with the server's reason. |
 | `/facts` | Groups candidates by field, marks conflicts, confirms (with an optional correction) or rejects one candidate, and applies confirmed contact email/phone/GPA to the profile. |
+| `/research` | Drills from institution to department to program in the shared cache, with country/degree/area filters and paging. Every row keeps its official link, last-checked date and a `Cached`/`Stale` badge; a stale row is labelled orientation only. Opening details re-reads that one program. |
 
-Discovery, matching, CV review, email drafting and sending are still
-descriptions of work that does not exist yet. No page sends email and no page
-connects Gmail.
+A live source adapter, faculty discovery, matching, CV review, email drafting
+and sending are still descriptions of work that does not exist yet. The
+research screen reads `/api/research/*` only, so it cannot contact a source. No
+page sends email and no page connects Gmail.
 
 ## API client
 
@@ -69,13 +72,14 @@ npm run build
 - `lib/*.test.ts` — roadmap invariants, the API client (mocked `fetch`: JSON,
   `PUT`/`PATCH`, 204, multipart upload without a JSON type, coded errors), error
   copy, byte/date formatting, security headers (`form-action 'none'`).
-- `components/*.test.tsx` — all six interactive screens under jsdom with Testing
-  Library: consent gating, posted bodies, duplicate-email message, lockout
-  `Retry-After`, 401 handling, grant-then-refresh, sign-out, profile
+- `components/*.test.tsx` — all seven interactive screens under jsdom with
+  Testing Library: consent gating, posted bodies, duplicate-email message,
+  lockout `Retry-After`, 401 handling, grant-then-refresh, sign-out, profile
   load/new/save/replace semantics, upload/parse/delete, failed parse reasons,
   locked-file deletion, conflict display, confirm/reject/correct, apply with
-  overwrite, and server-rendered HTML proving the sign-in/register submit buttons
-  cannot fire natively before hydration.
+  overwrite, research drill-down/filter/paging/detail/stale/empty/failure states,
+  and server-rendered HTML proving the sign-in/register submit buttons cannot
+  fire natively before hydration.
 
 Dev-only dependencies added with the screens: `@testing-library/react`,
 `@testing-library/user-event`, `@testing-library/jest-dom` and `jsdom`. They are
@@ -114,8 +118,9 @@ in the data.
 - **No external fonts, images or analytics.** Pages render offline, and the build
   makes no network request.
 - **No UI framework.** Plain CSS with design tokens in `app/globals.css`; the
-  only client components are the six screens that need a session (register,
-  sign in, consent, profile, documents, facts). Everything else is server-rendered.
+  only client components are the seven screens that need a session (register,
+  sign in, consent, profile, documents, facts, research). Everything else is
+  server-rendered.
 - **No native form submission.** The forms declare `method="post"`, their submit
   buttons stay disabled until React has hydrated (`lib/hydration.ts`), and the
   CSP sets `form-action 'none'`. A click before hydration or with JavaScript
@@ -139,6 +144,7 @@ in the data.
 
 ## Status
 
-Landing page, register, sign in, consent, onboarding/profile, document upload
-and fact review. Next: discovery and the email studio. The Gmail connection
-arrives in Phase 9; until then no email can be sent from this site.
+Landing page, register, sign in, consent, onboarding/profile, document upload,
+fact review and research browsing. Next: the live discovery adapter, faculty
+records and the email studio. The Gmail connection arrives in Phase 9; until
+then no email can be sent from this site.

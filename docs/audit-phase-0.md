@@ -204,7 +204,8 @@ optimization) have no predecessor.
 | 2d-4a | Content API: profile, document upload/parse/delete, fact confirm/apply | merged (PR #15, ADR-014) |
 | 2d-4b | Onboarding/profile, document upload/list and fact-review screens | merged (PR #16, ADR-015) |
 | 4a | Shared research cache, program validation/provenance, offline `discover` | merged (PR #17, ADR-016) |
-| 4b-1 | Cache-only browse reads + research API (programs, institutions, departments) | this PR (ADR-016) |
+| 4b-1 | Cache-only browse reads + research API (programs, institutions, departments) | merged (PR #18, ADR-016) |
+| 4b-2 | Research browse screen: institution → department → program, filters, stale labels | this PR (ADR-016) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -550,3 +551,33 @@ makes the existing `register`/`login` safe to expose.
 * Blocked for 4b-3: the concrete live adapter still needs the Owner's
   polite-pool contact email and provider choice. 4b-2 (web screens) can proceed
   against these read-only endpoints.
+
+## 21. Phase 4b-2 notes (research browse screen)
+
+* New `/research` route and `ResearchBrowser` client component. It reads only
+  `/api/research/*`: there is no adapter, search button or source call in the
+  browser bundle, so a source cannot be contacted from the screen (§13.2.2/5).
+* The screen drills institution → department → program. Country filters the
+  institution list; country, degree and area filter programs; a department
+  selection scopes programs by `department_id` and a breadcrumb returns to the
+  whole institution or all institutions. Each level pages with `limit`/`offset`
+  and shows the API's `total`.
+* Every row keeps `last_checked_at`, a `Cached`/`Stale` badge and the official
+  link; a stale program detail states it is orientation only, not verified for
+  outreach or a deadline decision. An unstated field renders as "Not stated"
+  rather than being filled in, and an empty cache has explicit copy instead of a
+  fabricated result.
+* Opening a program's details re-reads `GET /api/research/programs/{id}` so the
+  panel shows the latest cached copy; the list row is never treated as complete.
+* The signed-out, failed-load and empty states reuse the shared account panels
+  and the existing `describeApiError` copy. The failed state offers a retry.
+* `web/lib/roadmap.ts` now marks research discovery `in-progress` on the web
+  surface (cache browsing works; the live adapter and faculty records do not),
+  and the landing-page summary counts follow.
+* Tests: 10 new frontend tests (`components/research-browser.test.tsx` and the
+  discovery status assertion in `lib/roadmap.test.ts`) covering the signed-out,
+  list, drill-down, department, filter/reset, detail fetch, empty, paging and
+  failure states. Frontend suite: 119 passed. Backend suite unchanged: 536
+  passed, 2 skipped.
+* Blocked for 4b-3: the concrete live adapter still needs the Owner's
+  polite-pool contact email and provider choice.
