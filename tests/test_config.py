@@ -47,6 +47,28 @@ def test_blank_values_fall_back_to_defaults() -> None:
     assert settings.log_level == DEFAULT_LOG_LEVEL
 
 
+def test_research_contact_email_is_optional_but_validated() -> None:
+    assert Settings().research_contact_email is None
+    assert Settings.from_env({"RIB_RESEARCH_CONTACT_EMAIL": "  "}).research_contact_email is None
+
+    settings = Settings.from_env({"RIB_RESEARCH_CONTACT_EMAIL": "  research@example.org  "})
+
+    assert settings.research_contact_email == "research@example.org"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["not-an-email", "Research Team <research@example.org>", "a@b", "a b@example.org"],
+)
+def test_invalid_research_contact_email_names_the_setting(value: str) -> None:
+    with pytest.raises(ConfigError) as excinfo:
+        Settings.from_env({"RIB_RESEARCH_CONTACT_EMAIL": value})
+
+    message = str(excinfo.value)
+    assert "RIB_RESEARCH_CONTACT_EMAIL" in message
+    assert "email address" in message
+
+
 @pytest.mark.parametrize("value", ["verbose", "WARN", "10"])
 def test_invalid_log_level_names_the_setting_and_allowed_values(value: str) -> None:
     with pytest.raises(ConfigError) as excinfo:

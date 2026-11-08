@@ -166,6 +166,18 @@ class DiscoveryUnavailableError(DiscoveryError):
     code = "discovery_unavailable"
 
 
+class SourceFetchError(DiscoveryError):
+    """Raised when a live source cannot be fetched safely.
+
+    The message names the host and the status or reason, never the response
+    body: a page can contain private or untrusted text and is not an error
+    message. ``code`` stays ``discovery_unavailable`` so an HTTP caller sees the
+    same retryable class as a missing adapter.
+    """
+
+    code = "discovery_unavailable"
+
+
 class ProgramNotFoundError(DiscoveryError):
     """Raised when a program id is not in the shared cache."""
 

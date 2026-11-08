@@ -205,7 +205,8 @@ optimization) have no predecessor.
 | 2d-4b | Onboarding/profile, document upload/list and fact-review screens | merged (PR #16, ADR-015) |
 | 4a | Shared research cache, program validation/provenance, offline `discover` | merged (PR #17, ADR-016) |
 | 4b-1 | Cache-only browse reads + research API (programs, institutions, departments) | merged (PR #18, ADR-016) |
-| 4b-2 | Research browse screen: institution → department → program, filters, stale labels | this PR (ADR-016) |
+| 4b-2 | Research browse screen: institution → department → program, filters, stale labels | merged (PR #19, ADR-016) |
+| 4b-3a | Polite live-source HTTP boundary + explicit JSON-LD page parser | this PR (ADR-017) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -581,3 +582,32 @@ makes the existing `register`/`login` safe to expose.
   passed, 2 skipped.
 * Blocked for 4b-3: the concrete live adapter still needs the Owner's
   polite-pool contact email and provider choice.
+
+## 22. Phase 4b-3a notes (polite live-source boundary)
+
+* New `http_source.py`: one GET per URL, with a contact-bearing
+  `User-Agent` and `From` header, `RIB_REQUEST_TIMEOUT_SECONDS`, a 2 MiB body
+  cap, HTTP(S)-only URLs and no credential-bearing URLs. A non-2xx response, an
+  oversized body, a cross-scheme redirect or a transport failure raises
+  `SourceFetchError` naming the host and status; the response body is never in
+  the message.
+* New `program_pages.py`: reads only schema.org JSON-LD
+  `EducationalOccupationalProgram`/`JobPosting` blocks. Explicit fields are
+  mapped; an unstated deadline, stipend, method or document list stays unknown,
+  status starts `unverified` and confidence is unscored. ISO dates only; prose
+  dates are ignored. `Course` is excluded. A malformed block is skipped without
+  hiding a valid block next to it; pages are read sequentially so a failure is
+  not hidden by a partial result.
+* New setting `RIB_RESEARCH_CONTACT_EMAIL` (blank by default). Constructing the
+  HTTP client without a valid single address is a `ConfigError` before any
+  request. `.env.example` documents it and keeps it blank, so a fresh checkout
+  cannot contact a source by accident.
+* No CLI or API wiring and no live request in this slice. The adapter that
+  connects parsed pages to `discovery.search_programs` still needs a source
+  choice; OpenAlex is a Phase 5 scholarly source, not an internship catalog.
+* Tests: 32 new (`tests/test_http_source.py`, `tests/test_program_pages.py` and
+  the contact-email config cases) covering contact/UA headers, unsafe URLs,
+  status and size failures, charset decoding, JSON-LD/`@graph` mapping, unknown
+  fields, malformed blocks, URL fallback, invalid dates, the item cap, sequential
+  loads and config validation. All HTTP is injected, so the suite opens no
+  socket. Full suite: 568 passed, 2 skipped.
