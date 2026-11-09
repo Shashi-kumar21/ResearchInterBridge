@@ -473,9 +473,8 @@ source.
 
 * 4b-1 layers the cache-only browse reads and their API on these tables without
   a schema change, and 4b-2 renders them in the browser. 4b-3a adds the polite
-  HTTP and explicit-page parsing boundary (ADR-017): it still makes no live
-  request without a configured contact address, and the adapter object that
-  writes its records into this cache is the next slice.
+  HTTP and explicit-page parsing boundary (ADR-017), and 4b-3b wires it into
+  `discover --source-url`; the HTTP API still exposes cache-only reads.
 * The cache is already queryable offline, so the browse API and the
   university → department → faculty screens reuse these reads instead of
   duplicating filter rules.
@@ -526,8 +525,12 @@ format, with no live calls until an operator configures a contact address.
 * OpenAlex remains a Phase 5 scholarly source for faculty and publications; it is
   not wired into program discovery. Phase 4 needs official university/department
   pages, which the operator configures.
-* Query filtering, cache writes and the adapter object that connects
-  `program_pages` to `discovery.search_programs` are still to come. They must
-  reuse `discovery`'s existing match rule rather than introduce a second one.
+* `OfficialPageProgramAdapter` implements the existing `ProgramAdapter` protocol,
+  and `discover --source-url ...` passes it to `discovery.search_programs`.
+  Parsed records are filtered by `discovered_program_matches`, which shares its
+  rule with the cache read, so cache and live results cannot drift. Cache writes,
+  TTLs and stale marking stay owned by `discovery`.
+* The HTTP API still exposes cache-only browse reads. Exposing live search there
+  needs its own route and a decision about who may trigger a source fetch.
 * The contact address is a deployment value, not a student value. `.env.example`
   leaves it blank, so a fresh checkout cannot contact a source by accident.

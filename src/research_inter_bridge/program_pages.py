@@ -21,7 +21,14 @@ from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlsplit
 
-from .discovery import MAX_ITEMS, DiscoveredProgram, SourceRef
+from .discovery import (
+    MAX_ITEMS,
+    DiscoveredProgram,
+    ProgramQuery,
+    SourceRef,
+    discovered_program_matches,
+)
+from .errors import DiscoveryError
 from .http_source import PoliteHttpClient, SourceResponse, decode_text
 
 #: Schema.org types that can describe an internship or a structured program.
@@ -106,6 +113,38 @@ def load_program_pages(
     """
 
     return tuple(load_program_page(client, source) for source in sources)
+
+
+class OfficialPageProgramAdapter:
+    """A live ``ProgramAdapter`` over configured official pages.
+
+    It owns no filtering of its own: every parsed record goes through
+    :func:`discovery.discovered_program_matches`, the same rule the cache uses.
+    A page that fails raises, so ``discovery.search_programs`` can mark the
+    refresh failed instead of writing half a result.
+    """
+
+    name = "official_page"
+    parser_version = "1"
+
+    def __init__(self, client: PoliteHttpClient, sources: tuple[ProgramPageSource, ...]) -> None:
+        if not sources:
+            raise DiscoveryError(
+                "an official-page adapter needs at least one configured source URL."
+            )
+        self._client = client
+        self._sources = tuple(sources)
+
+    @property
+    def sources(self) -> tuple[ProgramPageSource, ...]:
+        """The configured pages, exposed for diagnostics and CLI tests."""
+
+        return self._sources
+
+    def search(self, query: ProgramQuery) -> tuple[DiscoveredProgram, ...]:
+        pages = load_program_pages(self._client, self._sources)
+        records = tuple(program for page in pages for program in page.programs)
+        return tuple(record for record in records if discovered_program_matches(record, query))
 
 
 def programs_from_response(

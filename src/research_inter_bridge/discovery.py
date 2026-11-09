@@ -93,6 +93,10 @@ DEGREE_ALIASES: dict[str, frozenset[str]] = {
             "bachelor of arts",
             "bachelor of engineering",
             "bachelor of technology",
+            "bachelor's degree",
+            "bachelors degree",
+            "bachelor degree",
+            "undergraduate degree",
         }
     ),
     "master": frozenset(
@@ -121,6 +125,10 @@ DEGREE_ALIASES: dict[str, frozenset[str]] = {
             "master of engineering",
             "master of technology",
             "master of research",
+            "master's degree",
+            "masters degree",
+            "master degree",
+            "postgraduate degree",
         }
     ),
     "phd": frozenset(
@@ -133,6 +141,9 @@ DEGREE_ALIASES: dict[str, frozenset[str]] = {
             "dphil",
             "d.phil",
             "doctor of philosophy",
+            "doctoral degree",
+            "doctorate degree",
+            "phd degree",
         }
     ),
 }
@@ -1417,29 +1428,94 @@ def _program_matches(
 ) -> bool:
     """True when a cached row satisfies every stated filter.
 
+    The rule itself lives in :func:`_matches_values`, which an adapter record
+    uses too, so a live result and an offline result cannot disagree.
+    """
+
+    return _matches_values(
+        value_research_areas=_json_tuple(row["research_areas_json"]),
+        value_country=row["country"],
+        value_department_name=row["department_name"],
+        value_institution_name=row["institution_name"],
+        value_degree_level=row["degree_level"],
+        value_institution_id=row["institution_id"],
+        value_department_id=row["department_id"],
+        wanted_research_area=research_area,
+        wanted_country=country,
+        wanted_department=department,
+        wanted_degree_level=degree_level,
+        wanted_institution_id=institution_id,
+        wanted_department_id=department_id,
+    )
+
+
+def _matches_values(
+    *,
+    value_research_areas: Sequence[str],
+    value_country: Any,
+    value_department_name: Any,
+    value_institution_name: Any,
+    value_degree_level: Any,
+    value_institution_id: int | None,
+    value_department_id: int | None,
+    wanted_research_area: str | None,
+    wanted_country: str | None,
+    wanted_department: str | None,
+    wanted_degree_level: str | None,
+    wanted_institution_id: int | None,
+    wanted_department_id: int | None,
+) -> bool:
+    """The single filter rule shared by cache reads and live adapter records.
+
     Country and degree level are equality matches; department and research area
     accept a substring. The department filter also matches the institution name.
     A NULL field never matches a stated filter: unknown is not a confirmed value.
     """
 
-    if institution_id is not None and row["institution_id"] != institution_id:
+    if wanted_institution_id is not None and value_institution_id != wanted_institution_id:
         return False
-    if department_id is not None and row["department_id"] != department_id:
+    if wanted_department_id is not None and value_department_id != wanted_department_id:
         return False
-    if country is not None and not _same_text(row["country"], country):
+    if wanted_country is not None and not _same_text(value_country, wanted_country):
         return False
-    if department is not None and not (
-        _contains_text(row["department_name"], department)
-        or _contains_text(row["institution_name"], department)
+    if wanted_department is not None and not (
+        _contains_text(value_department_name, wanted_department)
+        or _contains_text(value_institution_name, wanted_department)
     ):
         return False
-    if degree_level is not None and not _same_degree(row["degree_level"], degree_level):
+    if wanted_degree_level is not None and not _same_degree(
+        value_degree_level, wanted_degree_level
+    ):
         return False
-    if research_area is not None:
-        return any(
-            research_area in area.casefold() for area in _json_tuple(row["research_areas_json"])
-        )
+    if wanted_research_area is not None:
+        return any(wanted_research_area in area.casefold() for area in value_research_areas)
     return True
+
+
+def discovered_program_matches(record: DiscoveredProgram, query: ProgramQuery) -> bool:
+    """Apply the cache filter rule to an adapter record before it is stored.
+
+    An adapter receives a normalised query and must return only matches. Using a
+    second matching implementation here would let a live result disagree with the
+    same query served from cache, which is exactly the drift §13.2 forbids.
+    """
+
+    normalised = query.normalised()
+    return _matches_values(
+        value_research_areas=record.research_areas,
+        value_country=record.country,
+        value_department_name=record.department,
+        value_institution_name=record.institution,
+        value_degree_level=record.degree_level,
+        value_institution_id=None,
+        value_department_id=None,
+        wanted_research_area=normalised.research_area,
+        wanted_country=normalised.country,
+        wanted_department=normalised.department,
+        wanted_degree_level=normalised.degree_level,
+        wanted_institution_id=None,
+        wanted_department_id=None,
+    )
 
 
 def _offline_program_ids(connection: sqlite3.Connection, query: ProgramQuery) -> tuple[int, ...]:
