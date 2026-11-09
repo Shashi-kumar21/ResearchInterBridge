@@ -10,9 +10,9 @@ screens**. Accounts, consent, sessions, profiles, document ingestion
 research browsing work from the CLI and the HTTP API, and the Next.js site in
 `web/` can register, sign in, edit the profile, upload a document, review facts
 and browse cached institutions, departments and programs. Discovery has a polite
-HTTP and explicit-page parsing boundary (ADR-017) but no adapter is wired into a
-live query yet. OAuth and sending are not implemented, and nothing in this
-repository can send email.
+HTTP and explicit-page parsing boundary (ADR-017) and the CLI can read configured
+official pages live; the HTTP API still exposes cache-only browse reads. OAuth
+and sending are not implemented, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
 * License: MIT (see `LICENSE`), decided by the Owner on 2026-11-02.
@@ -65,6 +65,8 @@ py -3.11 -m research_inter_bridge fact-list --user-id 1
 py -3.11 -m research_inter_bridge fact-confirm --user-id 1 --fact-id 3 --value "9.1/10"
 py -3.11 -m research_inter_bridge fact-apply --user-id 1
 py -3.11 -m research_inter_bridge discover --offline --country Germany
+$env:RIB_RESEARCH_CONTACT_EMAIL = "research@example.org"
+py -3.11 -m research_inter_bridge discover --source-url https://example.edu/programs --country Germany
 py -3.11 -m research_inter_bridge logout
 ```
 
@@ -119,20 +121,26 @@ never turned into a date, because that would invent a day and month.
 is printed with its official URL, source URLs, `last_checked_at` and a `stale`
 flag; unknown deadlines, funding or degree level stay `null` instead of being
 guessed. The cache holds public research data only and is shared across students.
-This slice ships no live source adapter yet: `--offline` browses what is cached
-and matches the filters against the local cache, so a filter works even when that
-exact query never reached a source. An online query without an adapter exits `1`
-with an actionable message. A fresh query makes no network call; a stale entry is
-refreshed on demand, and a failed refresh keeps the previous record marked stale
-and is not retried for an hour.
+`--offline` browses what is cached and matches the filters against the local
+cache, so a filter works even when that exact query never reached a source. An
+online query without a source exits `1` with an actionable message. A fresh
+query makes no network call; a stale entry is refreshed on demand, and a failed
+refresh keeps the previous record marked stale and is not retried for an hour.
+
+Live discovery is opt-in per command:
+`--source-url` names one official program page (repeat for more), and
+`--source-institution` supplies the institution when the page does not state a
+provider. It needs `RIB_RESEARCH_CONTACT_EMAIL`; without it the command exits
+before any request. `--offline` and `--source-url` cannot be combined.
 
 The live-source boundary is `http_source.py` plus `program_pages.py` (ADR-017).
-It performs one GET per configured official page with a contact-bearing
-`User-Agent`, a timeout, a 2 MiB cap and an HTTPS/HTTP-only rule, then accepts
-only schema.org JSON-LD typed `EducationalOccupationalProgram` or `JobPosting`.
-A field the page does not state stays `None`; prose deadlines are not parsed.
-The adapter that turns those records into a `discover` query is not wired yet,
-so no command contacts a source even when the contact address is set.
+It performs one GET per configured page with a contact-bearing `User-Agent`, a
+timeout, a 2 MiB cap and an HTTP(S)-only rule, then accepts only schema.org
+JSON-LD typed `EducationalOccupationalProgram` or `JobPosting`. A field the page
+does not state stays `None`; prose deadlines are not parsed. Parsed records pass
+through the same filter rule as the cache before they are stored, so a live
+result and an offline result cannot disagree. The HTTP API does not expose this
+live path yet; its `/api/research/*` routes remain cache-only.
 
 ## HTTP API (`serve`)
 
@@ -227,8 +235,8 @@ cookie is still sent). For automatic reload during development:
 uvicorn research_inter_bridge.api:create_app --factory --reload --port 8000
 ```
 
-Not implemented yet: the adapter that wires official pages into `discover`,
-OAuth and email sending.
+Not implemented yet: live discovery through the HTTP API, OAuth and email
+sending.
 
 ## Checks
 
