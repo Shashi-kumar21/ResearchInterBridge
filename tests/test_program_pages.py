@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 
-from research_inter_bridge.discovery import MAX_ITEMS
+import pytest
+
+from research_inter_bridge.discovery import MAX_ITEMS, ProgramQuery
+from research_inter_bridge.errors import DiscoveryError
 from research_inter_bridge.http_source import SourceResponse
 from research_inter_bridge.program_pages import (
     PROGRAM_SCHEMA_TYPES,
+    OfficialPageProgramAdapter,
     ProgramPageSource,
     load_program_page,
     load_program_pages,
@@ -227,3 +231,107 @@ def test_load_program_pages_reads_in_order_and_keeps_each_source() -> None:
 def test_supported_schema_types_are_named_not_inferred() -> None:
     assert {"EducationalOccupationalProgram", "JobPosting"} == PROGRAM_SCHEMA_TYPES
     assert "Course" not in PROGRAM_SCHEMA_TYPES
+
+
+class FakeClient:
+    """One prepared response per URL; no socket is opened."""
+
+    def __init__(self, responses: dict[str, SourceResponse]) -> None:
+        self.responses = responses
+        self.calls: list[str] = []
+
+    def get(self, url: str) -> SourceResponse:
+        self.calls.append(url)
+        return self.responses[url]
+
+
+def adapter_for(responses: dict[str, SourceResponse]) -> OfficialPageProgramAdapter:
+    return OfficialPageProgramAdapter(FakeClient(responses), (SOURCE,))  # type: ignore[arg-type]
+
+
+def test_adapter_applies_the_shared_query_rule() -> None:
+    payload = {
+        "@graph": [
+            {
+                "@type": "EducationalOccupationalProgram",
+                "name": "Machine learning internship",
+                "provider": {"name": "Example University"},
+                "educationalCredentialAwarded": "Master of Science",
+                "keywords": "machine learning, physics",
+            },
+            {
+                "@type": "EducationalOccupationalProgram",
+                "name": "Biology internship",
+                "provider": {"name": "Other University"},
+                "educationalCredentialAwarded": "BSc",
+                "keywords": "biology",
+            },
+        ]
+    }
+    adapter = adapter_for({SOURCE.url: response(json_ld(payload))})
+
+    matched = adapter.search(
+        ProgramQuery(country="Germany", degree_level="master", research_area="machine learning")
+    )
+    assert [program.name for program in matched] == ["Machine learning internship"]
+
+    assert adapter.search(ProgramQuery(degree_level="master"))[0].name == (
+        "Machine learning internship"
+    )
+    assert adapter.search(ProgramQuery(country="Netherlands")) == ()
+
+
+def test_adapter_never_returns_an_unknown_country_for_a_stated_filter() -> None:
+    payload = {
+        "@type": "EducationalOccupationalProgram",
+        "name": "Unstated country",
+        "provider": {"name": "Example University"},
+    }
+    source = ProgramPageSource(url="https://unknown.example.edu/programs", institution="Unknown")
+    adapter = OfficialPageProgramAdapter(
+        FakeClient({source.url: response(json_ld(payload))}),  # type: ignore[arg-type]
+        (source,),
+    )
+
+    assert adapter.search(ProgramQuery(country="Germany")) == ()
+    assert len(adapter.search(ProgramQuery())) == 1
+
+
+def test_adapter_department_filter_also_matches_the_institution_name() -> None:
+    payload = {
+        "@type": "EducationalOccupationalProgram",
+        "name": "Program",
+        "provider": {"name": "Example University"},
+    }
+    adapter = adapter_for({SOURCE.url: response(json_ld(payload))})
+
+    assert len(adapter.search(ProgramQuery(department="example university"))) == 1
+    assert len(adapter.search(ProgramQuery(department="physics"))) == 1
+    assert adapter.search(ProgramQuery(department="chemistry")) == ()
+
+
+def test_adapter_reads_each_configured_page_once() -> None:
+    second = ProgramPageSource(
+        url="https://second.example.edu/programs", institution="Second University"
+    )
+    client = FakeClient(
+        {
+            SOURCE.url: response(
+                json_ld({"@type": "EducationalOccupationalProgram", "name": "First"})
+            ),
+            second.url: response(
+                json_ld({"@type": "EducationalOccupationalProgram", "name": "Second"})
+            ),
+        }
+    )
+    adapter = OfficialPageProgramAdapter(client, (SOURCE, second))  # type: ignore[arg-type]
+
+    records = adapter.search(ProgramQuery())
+
+    assert client.calls == [SOURCE.url, second.url]
+    assert [program.name for program in records] == ["First", "Second"]
+
+
+def test_adapter_requires_at_least_one_configured_page() -> None:
+    with pytest.raises(DiscoveryError, match="at least one"):
+        OfficialPageProgramAdapter(FakeClient({}), ())  # type: ignore[arg-type]

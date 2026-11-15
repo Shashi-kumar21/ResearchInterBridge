@@ -36,12 +36,15 @@ from .errors import (
     ConfigError,
     ConsentError,
     DiscoveryError,
+    DiscoveryUnavailableError,
     DocumentError,
     MigrationError,
     ProfileError,
 )
 from .health import check_health
+from .http_source import PoliteHttpClient
 from .logging import configure_logging, get_logger
+from .program_pages import OfficialPageProgramAdapter, ProgramPageSource
 
 logger = get_logger(__name__)
 
@@ -160,6 +163,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "--offline",
         action="store_true",
         help="Serve only what is already cached; never contact a source.",
+    )
+    discover.add_argument(
+        "--source-url",
+        action="append",
+        default=[],
+        metavar="URL",
+        help=(
+            "Official program page to read live; repeat for more pages. "
+            "Requires RIB_RESEARCH_CONTACT_EMAIL."
+        ),
+    )
+    discover.add_argument(
+        "--source-institution",
+        help="Institution name for source pages that do not state a provider.",
     )
     discover.add_argument("--json", action="store_true", help="Emit JSON (already the default).")
 
@@ -532,9 +549,45 @@ def _run_consent_command(args: argparse.Namespace, settings: Settings) -> int:
         return 0
 
 
+def _build_official_page_adapter(
+    settings: Settings,
+    source_urls: Sequence[str],
+    institution: str | None,
+) -> OfficialPageProgramAdapter:
+    """Build the live adapter, refusing before any request without a contact."""
+
+    if not source_urls:
+        raise DiscoveryError("at least one --source-url is required for live discovery.")
+    if settings.research_contact_email is None:
+        raise DiscoveryUnavailableError(
+            "live source access needs RIB_RESEARCH_CONTACT_EMAIL; set it to an "
+            "operational address, or use --offline to read the cache only (ADR-017)."
+        )
+    try:
+        client = PoliteHttpClient(
+            settings.research_contact_email,
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+    except ConfigError as exc:  # the setting was validated at startup; keep it actionable
+        raise DiscoveryUnavailableError(str(exc)) from exc
+    sources = tuple(
+        ProgramPageSource(url=url, institution=(institution or "").strip()) for url in source_urls
+    )
+    return OfficialPageProgramAdapter(client, sources)
+
+
 def _run_discover_command(args: argparse.Namespace, settings: Settings) -> int:
     """Query the shared cache; ``--offline`` never contacts a source."""
 
+    if args.source_url and args.offline:
+        raise DiscoveryError(
+            "--offline cannot be combined with --source-url; choose cache-only or live."
+        )
+    adapter = (
+        _build_official_page_adapter(settings, args.source_url, args.source_institution)
+        if args.source_url
+        else None
+    )
     with db.session(settings.database_path) as connection:
         db.apply_migrations(connection)
         result = discovery.search_programs(
@@ -545,6 +598,7 @@ def _run_discover_command(args: argparse.Namespace, settings: Settings) -> int:
                 department=args.department,
                 degree_level=args.degree_level,
             ),
+            adapter=adapter,
             offline=args.offline,
             actor="cli",
         )

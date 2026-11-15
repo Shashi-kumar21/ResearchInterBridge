@@ -206,7 +206,8 @@ optimization) have no predecessor.
 | 4a | Shared research cache, program validation/provenance, offline `discover` | merged (PR #17, ADR-016) |
 | 4b-1 | Cache-only browse reads + research API (programs, institutions, departments) | merged (PR #18, ADR-016) |
 | 4b-2 | Research browse screen: institution → department → program, filters, stale labels | merged (PR #19, ADR-016) |
-| 4b-3a | Polite live-source HTTP boundary + explicit JSON-LD page parser | this PR (ADR-017) |
+| 4b-3a | Polite live-source HTTP boundary + explicit JSON-LD page parser | merged (PR #20, ADR-017) |
+| 4b-3b | Official-page adapter wired into `discover --source-url` with shared filters | this PR (ADR-017) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -611,3 +612,29 @@ makes the existing `register`/`login` safe to expose.
   fields, malformed blocks, URL fallback, invalid dates, the item cap, sequential
   loads and config validation. All HTTP is injected, so the suite opens no
   socket. Full suite: 568 passed, 2 skipped.
+
+## 23. Phase 4b-3b notes (official-page adapter wiring)
+
+* `OfficialPageProgramAdapter` implements the existing `ProgramAdapter` protocol
+  over one or more `ProgramPageSource` entries. `discover --source-url URL`
+  (repeatable) builds it; `--source-institution` supplies the fallback provider
+  name. `--offline` and `--source-url` are mutually exclusive.
+* A live command refuses before any request when
+  `RIB_RESEARCH_CONTACT_EMAIL` is unset or invalid, and reports that setting in
+  the CLI error. The setting remains blank in `.env.example`.
+* Filtering moved behind `discovery._matches_values`: `_program_matches` (cache
+  and browse) and `discovered_program_matches` (adapter records) now call the
+  same rule, so country/degree equality and department/area substring matching
+  cannot drift between a live result and the same query served from cache. An
+  unknown adapter field still never matches a stated filter.
+* Degree aliases now include credential wording such as "Master's degree" and
+  "doctoral degree", so a JSON-LD `educationalCredentialAwarded` value is stored
+  under the same canonical token as `MSc`/`PhD` instead of defeating a degree
+  filter.
+* Tests: 8 new cases covering adapter query filtering, unknown-country
+  exclusion, institution-name department matching, one GET per configured page,
+  empty-source rejection, the offline/source conflict, the missing-contact error
+  and CLI URL/institution plumbing. The CLI adapter builder is monkeypatched in
+  the plumbing test, so no socket is opened. Full suite: 576 passed, 2 skipped.
+* Not done: the HTTP API still exposes cache-only browse reads. A live search
+  route needs a separate decision about who may trigger a source fetch.

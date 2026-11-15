@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from research_inter_bridge import cli as cli_module
 from research_inter_bridge import db, discovery
 from research_inter_bridge import research_cache as cache
 from research_inter_bridge.errors import CacheError, DiscoveryError, DiscoveryUnavailableError
@@ -708,3 +709,59 @@ def test_cli_without_adapter_or_cache_explains_the_blocker(cli) -> None:
     assert code == 1
     assert out == ""
     assert "no research discovery adapter" in cli.last_err
+
+
+def test_cli_rejects_offline_with_a_live_source(cli) -> None:
+    code, out = cli.run("discover", "--offline", "--source-url", "https://example.edu/programs")
+
+    assert code == 1
+    assert out == ""
+    assert "--offline cannot be combined with --source-url" in cli.last_err
+
+
+def test_cli_live_discovery_names_the_missing_contact_setting(
+    cli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("RIB_RESEARCH_CONTACT_EMAIL", raising=False)
+    code, out = cli.run("discover", "--source-url", "https://example.edu/programs")
+
+    assert code == 1
+    assert out == ""
+    assert "RIB_RESEARCH_CONTACT_EMAIL" in cli.last_err
+
+
+def test_cli_live_discovery_passes_configured_urls_to_the_adapter(
+    cli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RIB_RESEARCH_CONTACT_EMAIL", "research@example.org")
+    captured: dict[str, object] = {}
+
+    def fake_builder(settings, source_urls, institution):
+        captured["contact"] = settings.research_contact_email
+        captured["urls"] = list(source_urls)
+        captured["institution"] = institution
+        return FakeAdapter(records=(make_program(),))
+
+    monkeypatch.setattr(cli_module, "_build_official_page_adapter", fake_builder)
+
+    code, out = cli.run(
+        "discover",
+        "--source-url",
+        "https://example.edu/programs",
+        "--source-url",
+        "https://example.edu/other-programs",
+        "--source-institution",
+        "Example University",
+        "--country",
+        "Germany",
+    )
+
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["served_from_cache"] is False
+    assert payload["programs"][0]["name"] == "MSc Research Internship"
+    assert captured == {
+        "contact": "research@example.org",
+        "urls": ["https://example.edu/programs", "https://example.edu/other-programs"],
+        "institution": "Example University",
+    }

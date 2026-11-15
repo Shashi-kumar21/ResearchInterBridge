@@ -393,6 +393,9 @@ def test_degree_levels_are_stored_canonically(connection: sqlite3.Connection) ->
     assert discovery.normalise_degree_level("  Master of Science ") == "master"
     assert discovery.normalise_degree_level("BSc") == "bachelor"
     assert discovery.normalise_degree_level("PhD") == "phd"
+    assert discovery.normalise_degree_level("Master's degree") == "master"
+    assert discovery.normalise_degree_level("bachelor degree") == "bachelor"
+    assert discovery.normalise_degree_level("doctoral degree") == "phd"
     assert discovery.normalise_degree_level("Diploma") == "Diploma"
     assert discovery.normalise_degree_level("   ") is None
 
