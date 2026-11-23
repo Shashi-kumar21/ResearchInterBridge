@@ -681,8 +681,8 @@ makes the existing `register`/`login` safe to expose.
   co-author sharing, zero-call cache hits, normalised adapter queries, empty-result
   caching, refresh, failure marking and audit, backoff, cold failure, offline
   filters, fingerprint separation, browse hierarchy, a shared institution with
-  programs, paging and batched reads. Full suite: 643 passed, 2 skipped (with the
-  PR #22 clock fix applied).
+  programs, paging and batched reads. Full suite on `dev` after PR #22:
+  644 passed, 2 skipped.
 * Not done: a live faculty source (OpenAlex/Crossref plus official directory
   pages), the CLI and HTTP API for faculty, `faculty_count` on the
   institution/department browse rows, and the faculty screens. Those are 5b-5d.
