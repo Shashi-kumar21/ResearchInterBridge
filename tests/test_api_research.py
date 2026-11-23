@@ -25,7 +25,18 @@ EMAIL = "student@example.edu"
 PASSWORD = "correct horse battery staple"
 CONSENTS = ["personal_data", "document_processing"]
 ORIGIN = "http://localhost:3000"
-NOW = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
+
+
+def _seed_time() -> datetime:
+    """The cache is seeded at wall-clock time on purpose.
+
+    The API judges staleness with the real clock, so a seed fixed at a past date
+    turns "fresh" assertions into failures once the TTL elapses (a 14-day program
+    TTL broke this suite on 2026-11-19). Freshness here must not depend on when
+    the suite runs.
+    """
+
+    return datetime.now(UTC)
 
 
 def make_settings(tmp_path: Path) -> Settings:
@@ -109,7 +120,7 @@ def seed(settings: Settings) -> None:
             connection,
             discovery.ProgramQuery(country="Germany"),
             adapter=FakeAdapter(records=(TUM, DELFT, ETH)),
-            now=NOW,
+            now=_seed_time(),
         )
 
 
@@ -278,7 +289,7 @@ def test_a_known_institution_without_departments_is_an_empty_page(
             connection,
             discovery.ProgramQuery(country="Germany"),
             adapter=FakeAdapter(records=(make_program(department=None),)),
-            now=NOW,
+            now=_seed_time(),
         )
     institution = client.get("/api/research/institutions").json()["institutions"][0]
 
