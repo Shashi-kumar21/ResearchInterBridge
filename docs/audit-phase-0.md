@@ -209,8 +209,9 @@ optimization) have no predecessor.
 | 4b-3a | Polite live-source HTTP boundary + explicit JSON-LD page parser | merged (PR #20, ADR-017) |
 | 4b-3b | Official-page adapter wired into `discover --source-url` with shared filters | merged (PR #21, ADR-017) |
 | 5a | Faculty/publication cache, contact verification, attributed papers, faculty browse reads | merged (PR #23, ADR-018) |
-| 5b | Official-page `Person` parser, faculty page adapter, ORCID column (migration 8) | PR #24 (ADR-019) |
-| 5c | OpenAlex works attached by stated ORCID iD, attribution re-checked per work | this PR (ADR-020) |
+| 5b | Official-page `Person` parser, faculty page adapter, ORCID column (migration 8) | merged (PR #24, ADR-019) |
+| 5c | OpenAlex works attached by stated ORCID iD, attribution re-checked per work | merged (PR #25, ADR-020) |
+| 5c-fix | QA follow-ups on #25: truncated author lists, contact check, ADR-020 notes | this PR (ADR-020) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -779,3 +780,9 @@ makes the existing `register`/`login` safe to expose.
   All HTTP is faked. Full suite: 731 passed, 2 skipped.
 * Not done: CLI/API wiring for live faculty discovery (5d) and the faculty
   screens.
+* QA post-merge review (PR #25, APPROVE) follow-ups, in `fix/openalex-review-followups`:
+  m1 a work whose author list hits OpenAlex's 100-authorship list limit (or is
+  flagged `is_authors_truncated`) keeps no author list, and the attribution miss
+  beyond author 100 is documented; m2 ADR-020 states that an OpenAlex failure
+  fails the faculty refresh and makes official contacts stale; n1 the wrapper
+  requires a valid contact email; n2 the ORCID normalisation line is simplified.

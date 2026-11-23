@@ -676,3 +676,16 @@ is free and polite-pool friendly, but an author search by name merges people.
 * Errors in ORCID-to-work attribution inside OpenAlex itself are inherited; the
   per-work re-check guards against filter mismatches, not against a wrong ORCID
   claim in the index.
+* One OpenAlex failure (network, HTTP error, invalid JSON) fails the whole
+  faculty refresh, as any adapter failure does (ADR-016). The previous rows are
+  kept but marked stale, so their official contacts stop being sendable until a
+  refresh succeeds. That is the honest state; isolating paper failures from
+  profile refreshes needs a separate publication refresh path (QA m2, #25).
+* OpenAlex list endpoints return only a work's first 100 authorships
+  (`is_authors_truncated`). Such an author list is not copied (authors stay
+  unknown), and a person who appears only after the first 100 is not found by
+  the per-work re-check, so that work is not attributed. Fetching each large
+  work individually would be one extra request per paper; it is deferred
+  (QA m1, #25).
+* The wrapper refuses to start without a valid contact email, so a request never
+  goes out with an empty `mailto` (QA n1, #25).
