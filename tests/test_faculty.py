@@ -61,6 +61,9 @@ class FakeAdapter:
     records: tuple[fac.DiscoveredFaculty, ...] = ()
     name: str = "fixture"
     parser_version: str = "1"
+    # Most tests model the operator-configured official-page source; the
+    # contact-authority tests below override this.
+    contact_authority: str = "official"
     calls: int = 0
     error: Exception | None = None
     queries: list[fac.FacultyQuery] = field(default_factory=list)
@@ -305,6 +308,84 @@ def test_an_email_listed_elsewhere_is_unverified_and_never_sendable(
     assert (row["status"], row["verified_at"]) == ("unverified", None)
 
 
+@pytest.mark.parametrize(
+    ("profile", "listing"),
+    [
+        # An ORCID record lists a self-reported address on its own host.
+        ("https://orcid.org/0000-0002-1825-0097", "https://orcid.org/0000-0002-1825-0097"),
+        # A shared host: another person's page would match too.
+        ("https://sites.google.com/view/jane", "https://sites.google.com/view/other"),
+        # Even an institutional host, when the adapter is not an official source.
+        (PROFILE, PROFILE),
+    ],
+)
+def test_a_non_official_adapter_never_verifies_an_address_on_any_host(
+    connection: sqlite3.Connection, profile: str, listing: str
+) -> None:
+    adapter = FakeAdapter(
+        records=(person(profile_url=profile, email_source_url=listing),),
+        contact_authority="none",
+    )
+
+    member = fac.search_faculty(
+        connection, fac.FacultyQuery(country="Germany"), adapter=adapter, now=NOW
+    ).faculty[0]
+
+    assert member.email == "jane.doe@cs.example.edu"
+    assert member.email_status == "unverified"
+    assert member.contact_sendable is False
+
+
+def test_an_adapter_that_declares_no_authority_is_treated_as_none(
+    connection: sqlite3.Connection,
+) -> None:
+    @dataclass
+    class Undeclared:
+        name: str = "aggregator"
+        parser_version: str = "1"
+
+        def search(self, query: fac.FacultyQuery) -> tuple[fac.DiscoveredFaculty, ...]:
+            return (person(),)
+
+    member = fac.search_faculty(
+        connection, fac.FacultyQuery(country="Germany"), adapter=Undeclared(), now=NOW
+    ).faculty[0]
+
+    assert member.email_status == "unverified"
+    assert member.contact_sendable is False
+
+
+@pytest.mark.parametrize("authority", ["Official", "trusted", "", None])
+def test_an_unknown_authority_fails_before_the_source_is_called(
+    connection: sqlite3.Connection, authority: object
+) -> None:
+    adapter = FakeAdapter(records=(person(),), contact_authority=authority)  # type: ignore[arg-type]
+
+    with pytest.raises(DiscoveryError, match="contact_authority"):
+        fac.search_faculty(connection, fac.FacultyQuery(country="Germany"), adapter=adapter)
+    assert adapter.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("listing", "authority", "expected"),
+    [
+        (PROFILE, "official", "verified"),
+        ("https://cs.example.edu/people/jane.doe/contact", "official", "verified"),
+        ("https://example.edu/directory", "official", "unverified"),
+        (PROFILE, "none", "unverified"),
+    ],
+)
+def test_email_status_needs_official_authority_and_the_profile_host(
+    listing: str, authority: str, expected: str
+) -> None:
+    assert fac.email_status_for(listing, PROFILE, authority=authority) == expected
+
+
+def test_email_status_rejects_an_unknown_authority() -> None:
+    with pytest.raises(DiscoveryError, match="contact authority"):
+        fac.email_status_for(PROFILE, PROFILE, authority="trusted")
+
+
 def test_a_profile_without_an_email_is_unavailable(connection: sqlite3.Connection) -> None:
     member = fill(connection, person(email=None, email_source_url=None)).faculty[0]
 
@@ -419,6 +500,24 @@ def test_co_authors_share_one_publication_row(connection: sqlite3.Connection) ->
     assert {member.publications[0].id for member in result.faculty} == {
         result.faculty[0].publications[0].id
     }
+    assert connection.execute("SELECT COUNT(*) FROM publications").fetchone()[0] == 1
+
+
+def test_a_url_identified_paper_ignores_scheme_and_trailing_slash(
+    connection: sqlite3.Connection,
+) -> None:
+    other = "https://www.cs.example.edu/people/ravi.kumar"
+    fill(
+        connection,
+        person(publications=(paper(doi=None, url="http://lab.example.edu/papers/42"),)),
+        person(
+            full_name="Ravi Kumar",
+            profile_url=other,
+            email_source_url=other,
+            publications=(paper(doi=None, url="https://lab.example.edu/papers/42/"),),
+        ),
+    )
+
     assert connection.execute("SELECT COUNT(*) FROM publications").fetchone()[0] == 1
 
 

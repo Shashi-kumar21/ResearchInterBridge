@@ -552,14 +552,21 @@ rules that are checked in code, before any live source exists.
   URL. The name is display data. A different profile URL is a different person;
   the same URL with a new name is the same person, renamed.
 * An email is stored only with `email_source_url`, the page that lists it, and
-  only as one plain address. It is `verified` when that page is on the profile's
-  host (ignoring `www.`), otherwise `unverified`. `contact_sendable` requires a
-  verified address on a fresh (non-stale) record. Outreach (Phase 8-10) must use
-  that flag, never the presence of an address.
+  only as one plain address. It is `verified` only when **both** hold: the
+  adapter declares `contact_authority = "official"` (it reads operator-configured
+  institutional pages), and the listing page is on the profile's host (ignoring
+  `www.`). Every other case is `unverified`. The host check alone is not enough:
+  an ORCID record or a shared host such as `sites.google.com` puts a
+  self-reported or another person's address on the same host as the profile (QA
+  M1, PR #23). An adapter that declares no authority is `none`; an unknown value
+  is a `DiscoveryError` raised before the source is called.
+  `contact_sendable` requires a verified address on a fresh (non-stale) record.
+  Outreach (Phase 8-10) must use that flag, never the presence of an address.
 * A paper is linked to a person only because the source attributed it to that
   profile. Author lists are kept in order as display text and are never used to
   link people. A DOI or a source URL is required; nothing fills a missing year,
-  venue or abstract.
+  venue or abstract. Without a DOI, the paper's identity is its URL normalised
+  like a profile URL (scheme, `www.`, trailing slash and fragment ignored).
 * Faculty and publications follow the §13.3 TTLs and the same refresh, backoff
   and failure rules as programs (ADR-016). A failed refresh makes the faculty,
   their papers and the derived institution/department entries stale together.
@@ -577,3 +584,13 @@ rules that are checked in code, before any live source exists.
   to a later slice rather than guessed.
 * A person with two official profile pages (a joint appointment, for example) is
   two rows. That is deliberate: merging needs explicit evidence, not similarity.
+* Publication rows are shared. The last successful source to store a paper
+  overwrites its title, venue, abstract and author list, so two sources that
+  disagree will alternate the row. Per-source publication metadata is deferred
+  until a second publication source exists (5c).
+* A failed refresh marks a shared paper stale for every faculty member linked to
+  it, not only the one whose page failed. That is conservative: a paper is shown
+  as verified only while every source that backs it is fresh.
+* `browse_faculty` and offline faculty search load every faculty row and filter
+  in Python, like the program reads. That is fine at cache sizes today; the
+  PostgreSQL phase should push these filters into SQL.
