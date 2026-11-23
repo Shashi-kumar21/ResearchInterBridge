@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import faculty as fac
 from .discovery import SourceRef
@@ -100,9 +101,6 @@ class OfficialPageFacultyAdapter:
     #: Operator-configured institutional pages are the one source allowed to
     #: verify an address (ADR-018); the host rule still applies on top.
     contact_authority = "official"
-    #: Operator-configured institutional pages are the one source allowed to
-    #: verify an address (ADR-018); the host rule still applies on top.
-    contact_authority = "official"
 
     def __init__(self, client: PoliteHttpClient, sources: tuple[FacultyPageSource, ...]) -> None:
         if not sources:
@@ -131,48 +129,80 @@ def faculty_from_response(
     collector.feed(decode_text(response))
     collector.close()
 
-    people: list[fac.DiscoveredFaculty] = []
-    seen: set[str] = set()
+    candidates: list[tuple[dict[str, Any], bool]] = []
     for block in collector.blocks:
         try:
             payload = json.loads(block)
         except (json.JSONDecodeError, RecursionError):
             # One broken block must not hide a valid block next to it.
             continue
-        for item in _people(payload):
-            person = _person_from_object(item, source, response.status)
-            if person is None:
-                continue
-            key = fac.normalise_profile_url(person.profile_url)
-            if key in seen:
-                # The same profile stated twice (for example a ProfilePage and
-                # its Person node) is one person.
-                continue
-            seen.add(key)
-            people.append(person)
-            if len(people) >= MAX_PEOPLE_PER_PAGE:
-                return tuple(people)
+        candidates.extend(_people(payload))
+
+    # A Person without its own `url` may borrow the page URL as its identity only
+    # when that cannot collide: the page describes exactly one person, or exactly
+    # one ProfilePage main entity. On a directory page every url-less person
+    # would share one canonical key, so a later refresh in a different order
+    # would "rename" a stored row to someone else (QA M1, PR #24). Such people
+    # are skipped rather than given an invented identity.
+    distinct = {_fingerprint(item) for item, _ in candidates}
+    main_entities = {_fingerprint(item) for item, is_main in candidates if is_main}
+    page_identity_for: str | None = None
+    if len(distinct) == 1:
+        page_identity_for = next(iter(distinct))
+    elif len(main_entities) == 1:
+        page_identity_for = next(iter(main_entities))
+
+    people: list[fac.DiscoveredFaculty] = []
+    seen: set[str] = set()
+    for item, _ in candidates:
+        person = _person_from_object(
+            item,
+            source,
+            response.status,
+            may_use_page_url=_fingerprint(item) == page_identity_for,
+        )
+        if person is None:
+            continue
+        key = fac.normalise_profile_url(person.profile_url)
+        if key in seen:
+            # The same profile stated twice (for example a ProfilePage and its
+            # Person node) is one person.
+            continue
+        seen.add(key)
+        people.append(person)
+        if len(people) >= MAX_PEOPLE_PER_PAGE:
+            return tuple(people)
     return tuple(people)
 
 
-def _people(payload: Any) -> list[dict[str, Any]]:
-    """Every ``Person`` object, including a ``ProfilePage``'s main entity."""
+def _people(payload: Any) -> list[tuple[dict[str, Any], bool]]:
+    """Every ``Person`` object, flagged ``True`` when it is a ProfilePage's subject."""
 
-    found: list[dict[str, Any]] = []
+    found: list[tuple[dict[str, Any], bool]] = []
     for item in _iter_objects(payload):
         types = _schema_types(item)
         if PERSON_SCHEMA_TYPES.intersection(types):
-            found.append(item)
+            found.append((item, False))
         elif PROFILE_PAGE_TYPES.intersection(types):
             for key in ("mainEntity", "about"):
                 for entity in _iter_objects(item.get(key)):
                     if PERSON_SCHEMA_TYPES.intersection(_schema_types(entity)):
-                        found.append(entity)
+                        found.append((entity, True))
     return found
 
 
+def _fingerprint(item: dict[str, Any]) -> str:
+    """Content identity of a JSON-LD node, so a Person stated twice counts once."""
+
+    return json.dumps(item, sort_keys=True, ensure_ascii=False, default=str)
+
+
 def _person_from_object(
-    item: dict[str, Any], source: FacultyPageSource, http_status: int
+    item: dict[str, Any],
+    source: FacultyPageSource,
+    http_status: int,
+    *,
+    may_use_page_url: bool,
 ) -> fac.DiscoveredFaculty | None:
     name = _text(item.get("name")) or _joined_name(item)
     if name is None:
@@ -185,7 +215,11 @@ def _person_from_object(
     )
     if not institution:
         return None
-    profile_url = _http_url(item.get("url")) or source.url
+    profile_url = _http_url(item.get("url"))
+    if profile_url is None:
+        if not may_use_page_url:
+            return None
+        profile_url = source.url
     email = _email(item.get("email"))
     return fac.DiscoveredFaculty(
         full_name=name,
@@ -260,7 +294,17 @@ def _orcid_candidates(value: Any) -> list[str]:
 
 
 def _sources(profile_url: str, source: FacultyPageSource) -> tuple[SourceRef, ...]:
-    refs = [SourceRef(url=profile_url, publisher=source.institution, kind="official_page")]
+    # A Person's own `url` can point off the configured host (a personal site).
+    # It is labelled `linked_page` then, so provenance never overstates it.
+    kind = "official_page" if _same_host(profile_url, source.url) else "linked_page"
+    refs = [SourceRef(url=profile_url, publisher=source.institution, kind=kind)]
     if source.url != profile_url:
         refs.append(SourceRef(url=source.url, publisher=source.institution, kind="directory_page"))
     return tuple(refs)
+
+
+def _same_host(first: str, second: str) -> bool:
+    def host(url: str) -> str:
+        return (urlsplit(url).hostname or "").casefold().removeprefix("www.")
+
+    return host(first) == host(second)

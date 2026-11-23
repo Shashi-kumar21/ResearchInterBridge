@@ -891,6 +891,7 @@ ORCID = "0000-0002-1825-0097"
         (ORCID, ORCID),
         (f"https://orcid.org/{ORCID}", ORCID),
         (f"http://orcid.org/{ORCID}/", ORCID),
+        (f"https://www.orcid.org/{ORCID}", ORCID),
         ("0000-0002-9079-593x", "0000-0002-9079-593X"),
         (None, None),
     ],

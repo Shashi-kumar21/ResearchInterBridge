@@ -66,7 +66,14 @@ _EMAIL_RE = re.compile(
 )
 _DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$")
 _ORCID_RE = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$")
-_ORCID_PREFIXES = ("https://orcid.org/", "http://orcid.org/", "orcid.org/")
+_ORCID_PREFIXES = (
+    "https://orcid.org/",
+    "http://orcid.org/",
+    "https://www.orcid.org/",
+    "http://www.orcid.org/",
+    "www.orcid.org/",
+    "orcid.org/",
+)
 _DOI_PREFIXES = ("https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/")
 
 

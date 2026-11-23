@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -108,6 +108,95 @@ def test_a_person_without_a_url_uses_the_page_as_the_profile() -> None:
 
     assert person.profile_url == DIRECTORY
     assert [s.url for s in person.sources] == [DIRECTORY]
+
+
+def test_url_less_people_on_a_directory_page_get_no_record() -> None:
+    # (a) QA M1 on PR #24: two url-less people would share the page URL as their
+    # identity. They are skipped instead; a person with a url is still read.
+    payload = {
+        "@graph": [
+            jane(name="Ada Alpha", url=None, email="ada@cs.example.edu"),
+            jane(name="Bo Beta", url=None, email="bo@cs.example.edu"),
+            jane(),
+        ]
+    }
+
+    people = faculty_from_response(SOURCE, response(json_ld(payload)))
+
+    assert [person.full_name for person in people] == ["Jane Doe"]
+
+
+def test_a_single_url_less_person_still_uses_the_page() -> None:
+    # (b) One person on the page: the page URL cannot collide with anyone.
+    (person,) = faculty_from_response(SOURCE, response(json_ld(jane(url=None))))
+
+    assert person.profile_url == DIRECTORY
+
+
+def test_a_profile_page_subject_may_use_the_page_but_other_url_less_people_may_not() -> None:
+    subject = jane(url=None)
+    colleague = jane(name="Bo Beta", url=None, email=None, sameAs=None)
+    payload = {"@graph": [{"@type": "ProfilePage", "mainEntity": subject}, colleague]}
+
+    people = faculty_from_response(SOURCE, response(json_ld(payload)))
+
+    assert [(p.full_name, p.profile_url) for p in people] == [("Jane Doe", DIRECTORY)]
+
+
+def test_two_url_less_profile_page_subjects_are_both_skipped() -> None:
+    payload = {
+        "@graph": [
+            {"@type": "ProfilePage", "mainEntity": jane(url=None)},
+            {"@type": "ProfilePage", "about": jane(name="Bo Beta", url=None, sameAs=None)},
+        ]
+    }
+
+    assert faculty_from_response(SOURCE, response(json_ld(payload))) == ()
+
+
+def test_reordering_a_directory_never_renames_a_stored_person(tmp_path: Path) -> None:
+    # (c) Before the fix, refresh 2 turned the row stored for Ada into Cy, with
+    # Cy's verified address attached.
+    def page(*names: str) -> SourceResponse:
+        graph = [
+            jane(name=name, url=None, email=f"{name.split()[0].lower()}@cs.example.edu")
+            for name in names
+        ]
+        graph.append(jane())
+        return response(json_ld({"@graph": graph}))
+
+    with db.session(tmp_path / "app.db") as connection:
+        db.apply_migrations(connection)
+        for index, names in enumerate((("Ada Alpha", "Bo Beta"), ("Cy Gamma", "Ada Alpha"))):
+            adapter = OfficialPageFacultyAdapter(
+                FakeClient({DIRECTORY: page(*names)}),  # type: ignore[arg-type]
+                (SOURCE,),
+            )
+            fac.search_faculty(
+                connection,
+                fac.FacultyQuery(country="Germany"),
+                adapter=adapter,
+                now=NOW + timedelta(days=31 * index),
+            )
+        rows = connection.execute(
+            "SELECT f.full_name, f.profile_url, c.value FROM faculty_members AS f "
+            "LEFT JOIN faculty_contacts AS c ON c.faculty_id = f.id ORDER BY f.id"
+        ).fetchall()
+
+    assert [tuple(row) for row in rows] == [
+        ("Jane Doe", "https://www.cs.example.edu/people/jane.doe", "jane.doe@cs.example.edu")
+    ]
+
+
+def test_an_off_host_person_url_is_labelled_a_linked_page() -> None:
+    (person,) = faculty_from_response(
+        SOURCE, response(json_ld(jane(url="https://janedoe.github.io/")))
+    )
+
+    assert [(s.url, s.kind) for s in person.sources] == [
+        ("https://janedoe.github.io/", "linked_page"),
+        (DIRECTORY, "directory_page"),
+    ]
 
 
 @pytest.mark.parametrize(

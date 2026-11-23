@@ -621,11 +621,24 @@ addresses, and searching them by name would merge people.
   key a later slice may use to fetch a person's papers from a scholarly index.
 * The configured institution, country and department take precedence over page
   values, so the browse hierarchy does not fragment.
+* A Person without its own `url` may use the page URL as its identity only when
+  that cannot collide: the page describes exactly one person, or exactly one
+  `ProfilePage` main entity. Otherwise url-less people are skipped. Without this
+  rule every url-less person on a directory page shared one canonical key, so a
+  re-ordered directory "renamed" a stored row to someone else and attached that
+  person's verified address to it (QA M1, PR #24).
 
 **Consequences:**
 
 * A department that publishes no JSON-LD yields no faculty. That is the honest
   result; supporting another explicit format needs its own parser and review.
+* A directory page that lists people without their own profile links yields none
+  of them. Their identity is not stated, so it is not invented; the operator can
+  configure each person's own page instead.
+* A Person's `url` on a host other than the configured page is recorded as a
+  `linked_page` source, not `official_page`. Contact verification is unaffected:
+  it already requires the profile's host (ADR-018).
+* `www.orcid.org` is accepted as an ORCID prefix alongside `orcid.org`.
 * Papers for a person without a stated ORCID iD stay empty until a source
   attributes them explicitly. A name-based author search is not a fallback.
 * 5c can call OpenAlex `/authors/orcid:<id>` and `/works?filter=author.orcid:<id>`
