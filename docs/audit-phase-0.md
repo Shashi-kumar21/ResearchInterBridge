@@ -208,7 +208,7 @@ optimization) have no predecessor.
 | 4b-2 | Research browse screen: institution → department → program, filters, stale labels | merged (PR #19, ADR-016) |
 | 4b-3a | Polite live-source HTTP boundary + explicit JSON-LD page parser | merged (PR #20, ADR-017) |
 | 4b-3b | Official-page adapter wired into `discover --source-url` with shared filters | merged (PR #21, ADR-017) |
-| 5a | Faculty/publication cache, contact verification, attributed papers, faculty browse reads | PR #23 (ADR-018) |
+| 5a | Faculty/publication cache, contact verification, attributed papers, faculty browse reads | merged (PR #23, ADR-018) |
 | 5b | Official-page `Person` parser, faculty page adapter, ORCID column (migration 8) | this PR (ADR-019) |
 
 Phase 2c-2 notes for reviewers:
