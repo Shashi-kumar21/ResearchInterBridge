@@ -630,3 +630,36 @@ addresses, and searching them by name would merge people.
   attributes them explicitly. A name-based author search is not a fallback.
 * 5c can call OpenAlex `/authors/orcid:<id>` and `/works?filter=author.orcid:<id>`
   through the existing polite client, with no new dependency.
+
+## ADR-020 — Papers come from OpenAlex only by stated ORCID, re-checked per work
+
+**Status:** accepted 2026-11-24 · **Decided by:** Dev (within ADR-017 to ADR-019) · **Spec:** `task.md` §3.5, §8
+
+Faculty pages rarely list papers in structured form, and §3.5 asks for two or
+three recent publications with DOI or an official link. OpenAlex covers that and
+is free and polite-pool friendly, but an author search by name merges people.
+
+**Decision:**
+
+* OpenAlex is consulted only for a person whose official page stated an ORCID iD
+  (ADR-019), using `/works?filter=author.orcid:<id>`. No name, institution or
+  free-text search is ever sent.
+* Every returned work is re-checked: it is kept only if one of its authorships
+  carries that exact ORCID iD.
+* Only stated fields are mapped. An abstract is reconstructed exactly from the
+  inverted index or left unknown; nothing is summarised or generated.
+* The wrapper adds papers and nothing else. It keeps the inner adapter's
+  `contact_authority`, so OpenAlex can never verify or un-verify an address.
+* One request per person, sequential, through the existing polite client with
+  the deployment contact in `mailto`; a failure fails the refresh (ADR-016).
+
+**Consequences:**
+
+* A person without a stated ORCID iD has no papers until another explicit
+  source exists. That gap is shown, not filled.
+* A refresh of a large directory makes one OpenAlex request per person with an
+  iD. The 30-day faculty TTL and the one-hour failure backoff bound this; a
+  per-source rate limiter belongs with the scheduled refresh job.
+* Errors in ORCID-to-work attribution inside OpenAlex itself are inherited; the
+  per-work re-check guards against filter mismatches, not against a wrong ORCID
+  claim in the index.

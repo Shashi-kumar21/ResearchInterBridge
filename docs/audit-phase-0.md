@@ -209,7 +209,8 @@ optimization) have no predecessor.
 | 4b-3a | Polite live-source HTTP boundary + explicit JSON-LD page parser | merged (PR #20, ADR-017) |
 | 4b-3b | Official-page adapter wired into `discover --source-url` with shared filters | merged (PR #21, ADR-017) |
 | 5a | Faculty/publication cache, contact verification, attributed papers, faculty browse reads | merged (PR #23, ADR-018) |
-| 5b | Official-page `Person` parser, faculty page adapter, ORCID column (migration 8) | this PR (ADR-019) |
+| 5b | Official-page `Person` parser, faculty page adapter, ORCID column (migration 8) | PR #24 (ADR-019) |
+| 5c | OpenAlex works attached by stated ORCID iD, attribution re-checked per work | this PR (ADR-020) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -735,3 +736,39 @@ makes the existing `register`/`login` safe to expose.
 * Not done: CLI/API wiring for live faculty discovery (needs the same
   contact-email gate as `discover --source-url`), and fetching papers by ORCID
   (5c).
+
+## 26. Phase 5c notes (papers by ORCID from OpenAlex)
+
+* New `openalex.py`. `OrcidPublicationsAdapter` wraps a faculty adapter (in
+  practice `OfficialPageFacultyAdapter`). For each record whose page stated an
+  ORCID iD it makes one polite GET to OpenAlex `/works` with
+  `filter=author.orcid:<id>`, newest first, 25 works, a fixed `select` list and
+  `mailto` set to `RIB_RESEARCH_CONTACT_EMAIL`. Records without an iD cause no
+  request. Requests are sequential; a failure raises, so `search_faculty` marks
+  the refresh failed instead of storing a partial answer. No new dependency.
+* A work is kept only when one of its authorships carries the same ORCID iD
+  (normalised, check digit verified). The query filter is not trusted alone and
+  author names are never compared, so a namesake's paper is dropped.
+* Mapping keeps only stated fields: title, DOI (normalised, else unknown),
+  landing page or OpenAlex work URL, year (unknown if impossible), venue, and
+  the author display names in order. An author list with a missing or unsafe
+  name is not copied at all, because dropping one would shift every position.
+  The abstract is rebuilt word for word from the inverted index only when every
+  position is filled exactly once; otherwise it stays unknown. Values over the
+  validation caps or containing control characters are left unknown (a work
+  without a usable title is skipped), so one odd record cannot fail a refresh.
+* The wrapper keeps the inner adapter's `contact_authority` and is named
+  `<inner>+openalex`, so cache provenance shows both sources. OpenAlex supplies
+  no contact data.
+* Pages still supply no papers, so OpenAlex is the only paper source; the
+  ADR-018 "last source wins" note (m2) stays accepted.
+* Tests: 31 new (`tests/test_openalex.py`) covering the request shape (ORCID
+  filter, polite pool, no name search), field mapping, attribution by ORCID
+  only, unknown fields, impossible years, partial author lists, skipped works,
+  control characters and caps, malformed responses, the per-person cap, exact
+  abstract reconstruction, request-only-with-ORCID, authority pass-through and
+  validation, a bad ORCID never reaching the network, invalid JSON, merging with
+  existing papers, and an end-to-end cache fill whose repeat makes no request.
+  All HTTP is faked. Full suite: 731 passed, 2 skipped.
+* Not done: CLI/API wiring for live faculty discovery (5d) and the faculty
+  screens.

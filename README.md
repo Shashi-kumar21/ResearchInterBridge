@@ -16,7 +16,8 @@ official pages live; the HTTP API still exposes cache-only browse reads. Phase
 ADR-018): profile-URL identity, page-backed email verification and attributed
 papers. Phase 5b adds an official-page parser for schema.org `Person` records
 (`faculty_pages.py`, ADR-019) with stated-only emails and checksum-verified ORCID
-iDs; it is not wired to the CLI or API yet. OAuth and sending are
+iDs. Phase 5c attaches papers from OpenAlex keyed only by that stated ORCID iD
+(`openalex.py`, ADR-020). None of this is wired to the CLI or API yet. OAuth and sending are
 not implemented, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
@@ -319,6 +320,7 @@ src/research_inter_bridge/    Python package
   discovery.py                source-agnostic program cache, filters, browse reads
   faculty.py                  faculty/publication cache, contact verification, browse
   faculty_pages.py            explicit schema.org Person parser + faculty page adapter
+  openalex.py                 ORCID-keyed OpenAlex works for faculty records
   http_source.py              polite contact-bearing HTTP GET boundary (ADR-017)
   program_pages.py            explicit schema.org JSON-LD program parser
   api/                        FastAPI app: sessions, CORS, consent and account routes
