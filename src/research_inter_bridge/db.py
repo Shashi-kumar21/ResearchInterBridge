@@ -334,6 +334,100 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=7,
+        name="faculty_publication_cache",
+        statements=(
+            # Public research data (ADR-007, ADR-018): no user_id anywhere.
+            # Identity is the official profile URL, never the name, so two
+            # people with the same name stay two rows (task.md §3.5).
+            """
+            CREATE TABLE IF NOT EXISTS faculty_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                canonical_key TEXT NOT NULL UNIQUE,
+                full_name TEXT NOT NULL,
+                institution_id INTEGER NOT NULL REFERENCES institutions (id) ON DELETE CASCADE,
+                department_id INTEGER REFERENCES departments (id) ON DELETE SET NULL,
+                country TEXT,
+                title TEXT,
+                lab_name TEXT,
+                profile_url TEXT NOT NULL,
+                research_interests_json TEXT NOT NULL DEFAULT '[]',
+                recruitment_evidence_url TEXT,
+                confidence REAL,
+                last_checked_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_faculty_institution "
+            "ON faculty_members (institution_id, department_id)",
+            # A contact is only stored with the page that lists it. `verified`
+            # means it was listed on the official profile host; anything else is
+            # `unverified` and is never sendable.
+            """
+            CREATE TABLE IF NOT EXISTS faculty_contacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                faculty_id INTEGER NOT NULL REFERENCES faculty_members (id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK (kind IN ('email')),
+                value TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('verified', 'unverified')),
+                verified_at TEXT,
+                UNIQUE (faculty_id, kind)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS faculty_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                faculty_id INTEGER NOT NULL REFERENCES faculty_members (id) ON DELETE CASCADE,
+                url TEXT NOT NULL,
+                publisher TEXT,
+                kind TEXT NOT NULL DEFAULT 'official_page',
+                fetched_at TEXT NOT NULL,
+                verified_at TEXT,
+                UNIQUE (faculty_id, url)
+            )
+            """,
+            # NULL year/abstract/venue mean "the source did not state it".
+            """
+            CREATE TABLE IF NOT EXISTS publications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                canonical_key TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                year INTEGER,
+                doi TEXT UNIQUE,
+                url TEXT NOT NULL,
+                venue TEXT,
+                abstract TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            # Author names exactly as the source lists them, in order. A name is
+            # display text only: it is never used to link a person (§3.5).
+            """
+            CREATE TABLE IF NOT EXISTS publication_authors (
+                publication_id INTEGER NOT NULL REFERENCES publications (id) ON DELETE CASCADE,
+                position INTEGER NOT NULL CHECK (position >= 1),
+                display_name TEXT NOT NULL,
+                PRIMARY KEY (publication_id, position)
+            )
+            """,
+            # The only link between a person and a paper: the source attributed
+            # the paper to that profile. Never inferred from an author name.
+            """
+            CREATE TABLE IF NOT EXISTS faculty_publications (
+                faculty_id INTEGER NOT NULL REFERENCES faculty_members (id) ON DELETE CASCADE,
+                publication_id INTEGER NOT NULL REFERENCES publications (id) ON DELETE CASCADE,
+                linked_at TEXT NOT NULL,
+                PRIMARY KEY (faculty_id, publication_id)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_faculty_publications_publication "
+            "ON faculty_publications (publication_id)",
+        ),
+    ),
 )
 
 

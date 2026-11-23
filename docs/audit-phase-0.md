@@ -207,7 +207,8 @@ optimization) have no predecessor.
 | 4b-1 | Cache-only browse reads + research API (programs, institutions, departments) | merged (PR #18, ADR-016) |
 | 4b-2 | Research browse screen: institution → department → program, filters, stale labels | merged (PR #19, ADR-016) |
 | 4b-3a | Polite live-source HTTP boundary + explicit JSON-LD page parser | merged (PR #20, ADR-017) |
-| 4b-3b | Official-page adapter wired into `discover --source-url` with shared filters | this PR (ADR-017) |
+| 4b-3b | Official-page adapter wired into `discover --source-url` with shared filters | merged (PR #21, ADR-017) |
+| 5a | Faculty/publication cache, contact verification, attributed papers, faculty browse reads | this PR (ADR-018) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -638,3 +639,50 @@ makes the existing `register`/`login` safe to expose.
   the plumbing test, so no socket is opened. Full suite: 576 passed, 2 skipped.
 * Not done: the HTTP API still exposes cache-only browse reads. A live search
   route needs a separate decision about who may trigger a source fetch.
+
+## 24. Phase 5a notes (faculty and publication cache)
+
+* Migration 7 adds `faculty_members`, `faculty_contacts`, `faculty_sources`,
+  `publications`, `publication_authors` and `faculty_publications`. None carries a
+  `user_id`: this is public research data (ADR-007). `task.md` §7's
+  `faculty_affiliations` is the `institution_id`/`department_id` pair on
+  `faculty_members` in this slice (one profile page, one affiliation).
+* New `faculty.py` mirrors `discovery.py`: `DiscoveredFaculty` and
+  `DiscoveredPublication` adapter records, `validate_faculty`, cache-first
+  `search_faculty` (zero adapter calls while fresh, one-day empty-result cache,
+  one-hour retry backoff, offline filtering), cache-only `browse_faculty` and
+  `get_faculty`. No adapter, CLI command or API route ships in this slice.
+* Identity is the normalised official profile URL (scheme, `www.`, trailing slash
+  and fragment ignored), hashed into the canonical key. The name is not part of
+  it, so two people with one name are two rows and a renamed profile stays one.
+* An email is accepted only with the page that lists it (`email_source_url`) and
+  only as a single plain address; obfuscated forms are rejected, never rewritten.
+  It is `verified` when that page is on the profile's host, otherwise
+  `unverified`; no address is `unavailable`. `contact_sendable` is true only for
+  a verified address on a fresh record. A refresh that no longer lists the address
+  removes it.
+* Papers link to a person only through the record that attributes them
+  (`faculty_publications`). Author names are stored in order as display text and
+  never used for linking. A DOI (normalised, lower-case) or, without one, the
+  source URL is the paper's identity; a DOI without a URL links to `doi.org`. A
+  paper with neither is rejected. Profiles list papers newest first, undated
+  last, and highlight up to three; `recent` marks the last three calendar years.
+* Faculty use the §13.3 30-day TTL; each publication has its own 30-day cache
+  entry. A failed refresh marks the faculty, their papers and the derived
+  institution/department entries stale together, audits the error class only,
+  and returns the old rows labelled stale and not sendable.
+* `discovery.upsert_institution`, `upsert_department` and
+  `cache_institution_and_department` now take explicit fields, so a program and
+  a faculty member at one university share one browse node.
+* Tests: 67 new (`tests/test_faculty.py`) covering schema (no `user_id`, contact
+  status constraint), faculty/publication validation, DOI normalisation,
+  same-name non-merging, URL identity, email verification and sendability,
+  stale-not-sendable, dropped addresses, paper ordering/highlighting/attribution,
+  co-author sharing, zero-call cache hits, normalised adapter queries, empty-result
+  caching, refresh, failure marking and audit, backoff, cold failure, offline
+  filters, fingerprint separation, browse hierarchy, a shared institution with
+  programs, paging and batched reads. Full suite: 643 passed, 2 skipped (with the
+  PR #22 clock fix applied).
+* Not done: a live faculty source (OpenAlex/Crossref plus official directory
+  pages), the CLI and HTTP API for faculty, `faculty_count` on the
+  institution/department browse rows, and the faculty screens. Those are 5b-5d.

@@ -11,8 +11,11 @@ research browsing work from the CLI and the HTTP API, and the Next.js site in
 `web/` can register, sign in, edit the profile, upload a document, review facts
 and browse cached institutions, departments and programs. Discovery has a polite
 HTTP and explicit-page parsing boundary (ADR-017) and the CLI can read configured
-official pages live; the HTTP API still exposes cache-only browse reads. OAuth
-and sending are not implemented, and nothing in this repository can send email.
+official pages live; the HTTP API still exposes cache-only browse reads. Phase
+5a adds the faculty and publication cache as a Python service (`faculty.py`,
+ADR-018): profile-URL identity, page-backed email verification and attributed
+papers, with no CLI, API route or live faculty source yet. OAuth and sending are
+not implemented, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
 * License: MIT (see `LICENSE`), decided by the Owner on 2026-11-02.
@@ -312,6 +315,7 @@ src/research_inter_bridge/    Python package
   parsing.py                  PDF/DOCX/TXT text extraction with bounded limits
   facts.py                    fact extraction + confirm/reject/conflict workflow
   discovery.py                source-agnostic program cache, filters, browse reads
+  faculty.py                  faculty/publication cache, contact verification, browse
   http_source.py              polite contact-bearing HTTP GET boundary (ADR-017)
   program_pages.py            explicit schema.org JSON-LD program parser
   api/                        FastAPI app: sessions, CORS, consent and account routes

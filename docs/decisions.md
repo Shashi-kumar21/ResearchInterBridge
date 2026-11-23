@@ -534,3 +534,46 @@ format, with no live calls until an operator configures a contact address.
   needs its own route and a decision about who may trigger a source fetch.
 * The contact address is a deployment value, not a student value. `.env.example`
   leaves it blank, so a fresh checkout cannot contact a source by accident.
+
+## ADR-018 — Faculty identity is the profile URL; contacts and papers need a source
+
+**Status:** accepted 2026-11-24 · **Decided by:** Dev (within ADR-007, ADR-016) · **Spec:** `task.md` §3.5, §13
+
+Phase 5 has to list professors without the two failure modes §3.5 forbids:
+merging two people who share a name, and producing an email or paper the source
+never stated. Both are easy to introduce by accident: a name-based key merges
+people, and a "helpful" adapter rewrites `jane [at] uni.edu` or guesses
+`first.last@uni.edu`.
+
+**Decision:** store faculty in the shared cache with identity, contact and paper
+rules that are checked in code, before any live source exists.
+
+* A faculty record's canonical key is a hash of its normalised official profile
+  URL. The name is display data. A different profile URL is a different person;
+  the same URL with a new name is the same person, renamed.
+* An email is stored only with `email_source_url`, the page that lists it, and
+  only as one plain address. It is `verified` when that page is on the profile's
+  host (ignoring `www.`), otherwise `unverified`. `contact_sendable` requires a
+  verified address on a fresh (non-stale) record. Outreach (Phase 8-10) must use
+  that flag, never the presence of an address.
+* A paper is linked to a person only because the source attributed it to that
+  profile. Author lists are kept in order as display text and are never used to
+  link people. A DOI or a source URL is required; nothing fills a missing year,
+  venue or abstract.
+* Faculty and publications follow the §13.3 TTLs and the same refresh, backoff
+  and failure rules as programs (ADR-016). A failed refresh makes the faculty,
+  their papers and the derived institution/department entries stale together.
+* `faculty.py` reuses the validation helpers in `discovery.py` (text, URL, page
+  bounds, batching), so a program and a faculty record cannot disagree about what
+  a valid URL or a page size is.
+
+**Consequences:**
+
+* The host rule is conservative: a profile on `cs.uni.edu` with an address listed
+  on `uni.edu/directory` stays `unverified`. Widening it needs a registrable-domain
+  rule (a public-suffix list), which would be a new dependency, so it is deferred.
+* The same paper first seen without a DOI and later with one becomes two rows.
+  Merging them would need a confident match on more than a title, so it is left
+  to a later slice rather than guessed.
+* A person with two official profile pages (a joint appointment, for example) is
+  two rows. That is deliberate: merging needs explicit evidence, not similarity.

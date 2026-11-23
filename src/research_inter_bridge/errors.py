@@ -188,3 +188,9 @@ class InstitutionNotFoundError(DiscoveryError):
     """Raised when an institution id is not in the shared cache."""
 
     code = "institution_missing"
+
+
+class FacultyNotFoundError(DiscoveryError):
+    """A faculty id that is not in the shared cache."""
+
+    code = "faculty_missing"
