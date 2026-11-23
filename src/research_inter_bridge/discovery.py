@@ -14,8 +14,8 @@ Phase 4 of ``task.md`` (§3.4, §13). Discovery is deliberately source-agnostic:
 * ``offline=True`` never calls an adapter, so the browse screens keep working
   without a network (§13.2.5).
 
-Faculty and publications reuse the same cache tables and TTLs in Phase 5; this
-module currently models programs only.
+Faculty and publications live in :mod:`faculty`, which reuses this module's
+validation helpers and the shared institution/department upserts.
 """
 
 from __future__ import annotations
@@ -1111,8 +1111,17 @@ def _store_program(
     now: datetime,
 ) -> int:
     now_iso = cache.to_timestamp(now)
-    institution_id = _upsert_institution(connection, record, now_iso=now_iso)
-    department_id = _upsert_department(connection, record, institution_id, now_iso=now_iso)
+    institution_id = upsert_institution(
+        connection, institution=record.institution, country=record.country, now_iso=now_iso
+    )
+    department_id = upsert_department(
+        connection,
+        institution_id=institution_id,
+        institution=record.institution,
+        country=record.country,
+        department=record.department,
+        now_iso=now_iso,
+    )
     key = program_key(record)
     row = connection.execute(
         """
@@ -1208,22 +1217,36 @@ def _store_program(
         parser_version=adapter.parser_version,
         raw_payload_path=record.raw_payload_path,
     )
-    _cache_institution_and_department(
+    cache_institution_and_department(
         connection,
-        record,
+        institution=record.institution,
+        country=record.country,
+        department=record.department,
         institution_id=institution_id,
         department_id=department_id,
-        adapter=adapter,
-        now=now,
+        source_url=record.official_url,
+        http_status=record.http_status,
+        adapter_name=adapter.name,
+        parser_version=adapter.parser_version,
         now_iso=now_iso,
     )
     return program_id
 
 
-def _upsert_institution(
-    connection: sqlite3.Connection, record: DiscoveredProgram, *, now_iso: str
+def upsert_institution(
+    connection: sqlite3.Connection,
+    *,
+    institution: str,
+    country: str | None,
+    now_iso: str,
 ) -> int:
-    key = cache.canonical_key("institution", record.country or "", record.institution)
+    """Insert or refresh one shared institution row and return its id.
+
+    Programs and faculty records share this helper, so one university found
+    through either source is a single browse node, not two.
+    """
+
+    key = cache.canonical_key("institution", country or "", institution)
     row = connection.execute(
         """
         INSERT INTO institutions (canonical_key, name, country, website_url, created_at, updated_at)
@@ -1234,23 +1257,25 @@ def _upsert_institution(
             updated_at = excluded.updated_at
         RETURNING id
         """,
-        (key, record.institution, record.country, now_iso, now_iso),
+        (key, institution, country, now_iso, now_iso),
     ).fetchone()
     return int(row["id"])
 
 
-def _upsert_department(
+def upsert_department(
     connection: sqlite3.Connection,
-    record: DiscoveredProgram,
-    institution_id: int,
     *,
+    institution_id: int,
+    institution: str,
+    country: str | None,
+    department: str | None,
     now_iso: str,
 ) -> int | None:
-    if record.department is None:
+    """Insert or refresh one department under its institution; ``None`` if unstated."""
+
+    if department is None:
         return None
-    key = cache.canonical_key(
-        "department", record.country or "", record.institution, record.department
-    )
+    key = cache.canonical_key("department", country or "", institution, department)
     row = connection.execute(
         """
         INSERT INTO departments
@@ -1262,62 +1287,72 @@ def _upsert_department(
             updated_at = excluded.updated_at
         RETURNING id
         """,
-        (institution_id, key, record.department, now_iso, now_iso),
+        (institution_id, key, department, now_iso, now_iso),
     ).fetchone()
     return int(row["id"])
 
 
-def _cache_institution_and_department(
+def cache_institution_and_department(
     connection: sqlite3.Connection,
-    record: DiscoveredProgram,
     *,
+    institution: str,
+    country: str | None,
+    department: str | None,
     institution_id: int,
     department_id: int | None,
-    adapter: ProgramAdapter,
-    now: datetime,
+    source_url: str,
+    http_status: int | None,
+    adapter_name: str,
+    parser_version: str,
     now_iso: str,
 ) -> None:
+    """Write the derived institution/department cache entries for one source page.
+
+    The caller owns the transaction. The entries refresh with the page that
+    backs them (ADR-016), whether that page is a program or a faculty profile.
+    """
+
     institution_payload = {
-        "name": record.institution,
-        "country": record.country,
-        "source_url": record.official_url,
+        "name": institution,
+        "country": country,
+        "source_url": source_url,
     }
     cache.put_entry(
         connection,
         entity_type="institution",
         entity_id=institution_id,
-        canonical_key=cache.canonical_key("institution", record.country or "", record.institution),
-        source_url=record.official_url,
+        canonical_key=cache.canonical_key("institution", country or "", institution),
+        source_url=source_url,
         fetched_at=now_iso,
         verified_at=now_iso,
         ttl_seconds=cache.ttl_seconds("institution"),
         content_hash=cache.content_hash(institution_payload),
-        http_status=record.http_status,
-        adapter=adapter.name,
-        parser_version=adapter.parser_version,
+        http_status=http_status,
+        adapter=adapter_name,
+        parser_version=parser_version,
     )
     if department_id is None:
         return
     department_payload = {
-        "name": record.department or "",
-        "institution": record.institution,
-        "source_url": record.official_url,
+        "name": department or "",
+        "institution": institution,
+        "source_url": source_url,
     }
     cache.put_entry(
         connection,
         entity_type="department",
         entity_id=department_id,
         canonical_key=cache.canonical_key(
-            "department", record.country or "", record.institution, record.department or ""
+            "department", country or "", institution, department or ""
         ),
-        source_url=record.official_url,
+        source_url=source_url,
         fetched_at=now_iso,
         verified_at=now_iso,
         ttl_seconds=cache.ttl_seconds("department"),
         content_hash=cache.content_hash(department_payload),
-        http_status=record.http_status,
-        adapter=adapter.name,
-        parser_version=adapter.parser_version,
+        http_status=http_status,
+        adapter=adapter_name,
+        parser_version=parser_version,
     )
 
 
