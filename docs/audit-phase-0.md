@@ -722,17 +722,24 @@ makes the existing `register`/`login` safe to expose.
   * A person stated twice on one page (a `ProfilePage` plus its `Person` node)
     is one record; one page yields at most 200 people. Papers are not read from
     pages.
+  * QA review (PR #24): M1 fixed. A url-less Person borrows the page URL only
+    when the page describes exactly one person (or one `ProfilePage` subject);
+    on a directory page url-less people are skipped, so a re-ordered directory
+    can no longer rename a stored row. n1 (duplicate `contact_authority`
+    line) removed, n2 fixed (off-host person URLs are `linked_page`), n3 fixed
+    (`www.orcid.org` accepted).
 * `OfficialPageFacultyAdapter` reads configured pages once each, sequentially,
   raises on a failed page (no partial result), and filters with
   `faculty.discovered_faculty_matches`, the cache's own rule.
-* Tests: 42 new (`tests/test_faculty_pages.py`, ORCID cases in
+* Tests: 49 new (`tests/test_faculty_pages.py`, ORCID cases in
   `tests/test_faculty.py`) covering explicit fields, page-as-profile fallback,
   obfuscated/missing emails, `mailto:` cleanup, ORCID sources and check digits,
   name joining, `ProfilePage` de-duplication, directory pages, institution
   precedence, malformed blocks, the per-page cap, validation compatibility,
   sequential loading, failed pages, adapter filtering and an end-to-end cache
-  fill with verified and unverified contacts. All HTTP is faked. Full suite:
-  700 passed, 2 skipped.
+  fill with verified and unverified contacts, url-less directory people,
+  ProfilePage subjects, re-ordering without renames and linked-page labels.
+  All HTTP is faked. Full suite: 707 passed, 2 skipped.
 * Not done: CLI/API wiring for live faculty discovery (needs the same
   contact-email gate as `discover --source-url`), and fetching papers by ORCID
   (5c).
