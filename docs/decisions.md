@@ -594,3 +594,52 @@ rules that are checked in code, before any live source exists.
 * `browse_faculty` and offline faculty search load every faculty row and filter
   in Python, like the program reads. That is fine at cache sizes today; the
   PostgreSQL phase should push these filters into SQL.
+
+## ADR-019 — Faculty pages are read from explicit schema.org data; ORCID keys papers
+
+**Status:** accepted 2026-11-24 · **Decided by:** Dev (within ADR-017, ADR-018) · **Spec:** `task.md` §3.5, §8
+
+ADR-018 made identity, contacts and paper links safe once a record exists. A
+live faculty source still has to produce records without turning prose into an
+email or a name search into a paper list. OpenAlex and Crossref index authors
+and works, but they do not publish official profile URLs or institutional
+addresses, and searching them by name would merge people.
+
+**Decision:**
+
+* Faculty records come from operator-configured official pages, parsed only from
+  schema.org JSON-LD `Person` objects, the same explicit-data rule as
+  `program_pages` (ADR-017). Nothing is read from HTML prose.
+* An email is read only from `email`. A value that is not one plain address is
+  left unknown, not repaired. The page that states it is the evidence.
+  `OfficialPageFacultyAdapter` declares `contact_authority = "official"`, so
+  ADR-018's rule (official authority **and** the profile's host) decides whether
+  it is verified. A future ORCID or scholarly-index adapter declares nothing and
+  therefore never verifies an address.
+* An ORCID iD is stored only when the page states it as an ORCID (an `orcid.org`
+  URL or a `propertyID: ORCID` value) and its check digit holds. It is the only
+  key a later slice may use to fetch a person's papers from a scholarly index.
+* The configured institution, country and department take precedence over page
+  values, so the browse hierarchy does not fragment.
+* A Person without its own `url` may use the page URL as its identity only when
+  that cannot collide: the page describes exactly one person, or exactly one
+  `ProfilePage` main entity. Otherwise url-less people are skipped. Without this
+  rule every url-less person on a directory page shared one canonical key, so a
+  re-ordered directory "renamed" a stored row to someone else and attached that
+  person's verified address to it (QA M1, PR #24).
+
+**Consequences:**
+
+* A department that publishes no JSON-LD yields no faculty. That is the honest
+  result; supporting another explicit format needs its own parser and review.
+* A directory page that lists people without their own profile links yields none
+  of them. Their identity is not stated, so it is not invented; the operator can
+  configure each person's own page instead.
+* A Person's `url` on a host other than the configured page is recorded as a
+  `linked_page` source, not `official_page`. Contact verification is unaffected:
+  it already requires the profile's host (ADR-018).
+* `www.orcid.org` is accepted as an ORCID prefix alongside `orcid.org`.
+* Papers for a person without a stated ORCID iD stay empty until a source
+  attributes them explicitly. A name-based author search is not a fallback.
+* 5c can call OpenAlex `/authors/orcid:<id>` and `/works?filter=author.orcid:<id>`
+  through the existing polite client, with no new dependency.

@@ -65,6 +65,15 @@ _EMAIL_RE = re.compile(
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$"
 )
 _DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$")
+_ORCID_RE = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$")
+_ORCID_PREFIXES = (
+    "https://orcid.org/",
+    "http://orcid.org/",
+    "https://www.orcid.org/",
+    "http://www.orcid.org/",
+    "www.orcid.org/",
+    "orcid.org/",
+)
 _DOI_PREFIXES = ("https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/")
 
 
@@ -139,6 +148,7 @@ class DiscoveredFaculty:
     research_interests: tuple[str, ...] = ()
     email: str | None = None
     email_source_url: str | None = None
+    orcid: str | None = None
     recruitment_evidence_url: str | None = None
     publications: tuple[DiscoveredPublication, ...] = ()
     confidence: float | None = None
@@ -185,6 +195,7 @@ class FacultyMember:
     email: str | None
     email_status: str
     email_source_url: str | None
+    orcid: str | None
     #: True only for a verified address on a fresh record. Outreach must check
     #: this flag, never the presence of ``email`` alone (§3.5).
     contact_sendable: bool
@@ -312,6 +323,7 @@ def validate_faculty(
         research_interests=discovery._text_tuple(record.research_interests, "research_interests"),
         email=email,
         email_source_url=email_source_url,
+        orcid=normalise_orcid(record.orcid),
         recruitment_evidence_url=(
             None if recruitment is None else discovery._url(recruitment, "recruitment_evidence_url")
         ),
@@ -399,6 +411,50 @@ def normalise_doi(value: str | None) -> str | None:
     return cleaned
 
 
+def normalise_orcid(value: str | None) -> str | None:
+    """Return a bare ORCID iD (``0000-0002-1825-0097``) or raise for a bad one.
+
+    The resolver URL form is accepted. The ISO 7064 11-2 check digit is verified,
+    so a mistyped iD cannot point at somebody else's record.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise DiscoveryError("an ORCID iD must be a string.")
+    cleaned = value.strip()
+    lowered = cleaned.casefold()
+    for prefix in _ORCID_PREFIXES:
+        if lowered.startswith(prefix):
+            cleaned = cleaned[len(prefix) :]
+            break
+    cleaned = cleaned.rstrip("/").upper()
+    if not _ORCID_RE.match(cleaned) or not _orcid_checksum_ok(cleaned):
+        raise DiscoveryError(f"{value!r} is not a valid ORCID iD.")
+    return cleaned
+
+
+def _orcid_checksum_ok(orcid: str) -> bool:
+    digits = orcid.replace("-", "")
+    total = 0
+    for char in digits[:-1]:
+        total = (total + int(char)) * 2
+    check = (12 - total % 11) % 11
+    expected = "X" if check == 10 else str(check)
+    return digits[-1] == expected
+
+
+def is_plain_email(value: str) -> bool:
+    """True for one plain address the validator would accept as stated.
+
+    Page parsers use this to leave an obfuscated or malformed address unknown
+    instead of failing the whole refresh, and never to rewrite one.
+    """
+
+    cleaned = value.strip()
+    return len(cleaned) <= MAX_EMAIL_LENGTH and _EMAIL_RE.match(cleaned) is not None
+
+
 def email_status_for(email_source_url: str, profile_url: str, *, authority: str) -> str:
     """``verified`` only for an official adapter and a listing on the profile's host.
 
@@ -453,7 +509,7 @@ def _validated_email(
     if not isinstance(email, str):
         raise DiscoveryError(f"faculty {full_name!r} has a non-text email.")
     cleaned = email.strip()
-    if len(cleaned) > MAX_EMAIL_LENGTH or not _EMAIL_RE.match(cleaned):
+    if not is_plain_email(cleaned):
         # Obfuscated forms such as "name [at] uni.edu" are rejected rather than
         # rewritten: rewriting an address is the first step towards guessing one.
         raise DiscoveryError(
@@ -799,8 +855,8 @@ def _store_faculty(
         INSERT INTO faculty_members (
             canonical_key, full_name, institution_id, department_id, country, title,
             lab_name, profile_url, research_interests_json, recruitment_evidence_url,
-            confidence, last_checked_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            orcid, confidence, last_checked_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(canonical_key) DO UPDATE SET
             full_name = excluded.full_name,
             institution_id = excluded.institution_id,
@@ -811,6 +867,7 @@ def _store_faculty(
             profile_url = excluded.profile_url,
             research_interests_json = excluded.research_interests_json,
             recruitment_evidence_url = excluded.recruitment_evidence_url,
+            orcid = excluded.orcid,
             confidence = excluded.confidence,
             last_checked_at = excluded.last_checked_at,
             updated_at = excluded.updated_at
@@ -827,6 +884,7 @@ def _store_faculty(
             record.profile_url,
             json.dumps(record.research_interests, ensure_ascii=False),
             record.recruitment_evidence_url,
+            record.orcid,
             record.confidence,
             now_iso,
             now_iso,
@@ -1210,6 +1268,7 @@ def _load_faculty(
                 email=None if contact is None else str(contact["value"]),
                 email_status=email_status,
                 email_source_url=None if contact is None else str(contact["source_url"]),
+                orcid=discovery._row_text(row["orcid"]),
                 contact_sendable=email_status == "verified" and not is_stale,
                 recruitment_evidence_url=discovery._row_text(row["recruitment_evidence_url"]),
                 publications=papers,
@@ -1298,6 +1357,7 @@ def record_payload(record: DiscoveredFaculty) -> dict[str, Any]:
         "research_interests": list(record.research_interests),
         "email": record.email,
         "email_source_url": record.email_source_url,
+        "orcid": record.orcid,
         "recruitment_evidence_url": record.recruitment_evidence_url,
         "publications": [publication_key(publication) for publication in record.publications],
         "confidence": record.confidence,

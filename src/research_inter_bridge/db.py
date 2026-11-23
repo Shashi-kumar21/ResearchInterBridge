@@ -428,6 +428,18 @@ MIGRATIONS: tuple[Migration, ...] = (
             "ON faculty_publications (publication_id)",
         ),
     ),
+    Migration(
+        version=8,
+        name="faculty_orcid",
+        statements=(
+            # An ORCID iD stated on the official page. It is the only key later
+            # slices may use to fetch a person's papers from a scholarly index,
+            # because a name search would merge people (task.md §3.5). NULL means
+            # the page did not state one.
+            "ALTER TABLE faculty_members ADD COLUMN orcid TEXT",
+            "CREATE INDEX IF NOT EXISTS idx_faculty_orcid ON faculty_members (orcid)",
+        ),
+    ),
 )
 
 
