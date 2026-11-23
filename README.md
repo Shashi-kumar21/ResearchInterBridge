@@ -17,7 +17,8 @@ ADR-018): profile-URL identity, page-backed email verification and attributed
 papers. Phase 5b adds an official-page parser for schema.org `Person` records
 (`faculty_pages.py`, ADR-019) with stated-only emails and checksum-verified ORCID
 iDs. Phase 5c attaches papers from OpenAlex keyed only by that stated ORCID iD
-(`openalex.py`, ADR-020). None of this is wired to the CLI or API yet. OAuth and sending are
+(`openalex.py`, ADR-020), and 5d-1 adds the `faculty` CLI command (ADR-021).
+The HTTP API does not expose faculty yet. OAuth and sending are
 not implemented, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
@@ -73,6 +74,10 @@ py -3.11 -m research_inter_bridge fact-apply --user-id 1
 py -3.11 -m research_inter_bridge discover --offline --country Germany
 $env:RIB_RESEARCH_CONTACT_EMAIL = "research@example.org"
 py -3.11 -m research_inter_bridge discover --source-url https://example.edu/programs --country Germany
+py -3.11 -m research_inter_bridge faculty --offline --area "machine learning"
+py -3.11 -m research_inter_bridge faculty --source-url https://www.cs.example.edu/people `
+    --source-institution "Example University" --source-country Germany `
+    --source-department "Computer Science"
 py -3.11 -m research_inter_bridge logout
 ```
 
@@ -138,6 +143,16 @@ Live discovery is opt-in per command:
 `--source-institution` supplies the institution when the page does not state a
 provider. It needs `RIB_RESEARCH_CONTACT_EMAIL`; without it the command exits
 before any request. `--offline` and `--source-url` cannot be combined.
+
+`faculty` does the same for professors (ADR-018 to ADR-021). `--offline` reads
+the faculty cache; `--area`, `--country`, `--institution` and `--department`
+filter it. `--source-url` reads official faculty or directory pages live
+(schema.org `Person` JSON-LD only) and, unless `--no-papers` is passed, looks up
+papers on OpenAlex for people whose page states an ORCID iD. The `--source-*`
+options name the institution, country and department of those pages. Only a
+**verified** email is printed; an unverified one shows `email: null` with its
+`email_status` and `email_source_url`, and `contact_sendable` is the only flag
+outreach may trust. Live faculty fetches are CLI-only; the API stays cache-only.
 
 The live-source boundary is `http_source.py` plus `program_pages.py` (ADR-017).
 It performs one GET per configured page with a contact-bearing `User-Agent`, a

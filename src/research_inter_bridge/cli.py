@@ -29,6 +29,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import auth, consent, db, discovery, documents, facts, parsing, profiles
+from . import faculty as faculty_service
 from .config import Settings, load_settings
 from .errors import (
     AuthError,
@@ -41,9 +42,11 @@ from .errors import (
     MigrationError,
     ProfileError,
 )
+from .faculty_pages import FacultyPageSource, OfficialPageFacultyAdapter
 from .health import check_health
 from .http_source import PoliteHttpClient
 from .logging import configure_logging, get_logger
+from .openalex import OrcidPublicationsAdapter
 from .program_pages import OfficialPageProgramAdapter, ProgramPageSource
 
 logger = get_logger(__name__)
@@ -180,6 +183,39 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     discover.add_argument("--json", action="store_true", help="Emit JSON (already the default).")
 
+    faculty_parser = subparsers.add_parser(
+        "faculty", help="Search cached faculty and their papers, with provenance."
+    )
+    faculty_parser.add_argument("--area", dest="research_area", help="Research interest.")
+    faculty_parser.add_argument("--country", help="Country of the institution.")
+    faculty_parser.add_argument("--institution", help="Institution name (substring).")
+    faculty_parser.add_argument("--department", help="Department name (substring).")
+    faculty_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Serve only what is already cached; never contact a source.",
+    )
+    faculty_parser.add_argument(
+        "--source-url",
+        action="append",
+        default=[],
+        metavar="URL",
+        help=(
+            "Official faculty or directory page to read live; repeat for more pages. "
+            "Requires RIB_RESEARCH_CONTACT_EMAIL."
+        ),
+    )
+    faculty_parser.add_argument(
+        "--source-institution", help="Institution that owns the source pages."
+    )
+    faculty_parser.add_argument("--source-country", help="Country of the source pages.")
+    faculty_parser.add_argument("--source-department", help="Department of the source pages.")
+    faculty_parser.add_argument(
+        "--no-papers",
+        action="store_true",
+        help="Do not look up papers on OpenAlex for people with a stated ORCID iD.",
+    )
+
     serve = subparsers.add_parser("serve", help="Run the JSON API with uvicorn.")
     serve.add_argument(
         "--host",
@@ -290,6 +326,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         except (OSError, sqlite3.Error) as exc:
             print(f"discovery operation failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "faculty":
+        try:
+            return _run_faculty_command(args, settings)
+        except (CacheError, DiscoveryError) as exc:
+            print(f"faculty discovery error: {exc}", file=sys.stderr)
+            return 1
+        except (OSError, sqlite3.Error) as exc:
+            print(f"faculty discovery operation failed: {exc}", file=sys.stderr)
             return 1
 
     report = check_health(settings)
@@ -558,18 +604,7 @@ def _build_official_page_adapter(
 
     if not source_urls:
         raise DiscoveryError("at least one --source-url is required for live discovery.")
-    if settings.research_contact_email is None:
-        raise DiscoveryUnavailableError(
-            "live source access needs RIB_RESEARCH_CONTACT_EMAIL; set it to an "
-            "operational address, or use --offline to read the cache only (ADR-017)."
-        )
-    try:
-        client = PoliteHttpClient(
-            settings.research_contact_email,
-            timeout_seconds=settings.request_timeout_seconds,
-        )
-    except ConfigError as exc:  # the setting was validated at startup; keep it actionable
-        raise DiscoveryUnavailableError(str(exc)) from exc
+    client = _research_client(settings)
     sources = tuple(
         ProgramPageSource(url=url, institution=(institution or "").strip()) for url in source_urls
     )
@@ -615,6 +650,141 @@ def _run_discover_command(args: argparse.Namespace, settings: Settings) -> int:
         )
     )
     return 0
+
+
+def _research_client(settings: Settings) -> PoliteHttpClient:
+    """The polite client for live research sources; refuses without a contact (ADR-017)."""
+
+    if settings.research_contact_email is None:
+        raise DiscoveryUnavailableError(
+            "live source access needs RIB_RESEARCH_CONTACT_EMAIL; set it to an "
+            "operational address, or use --offline to read the cache only (ADR-017)."
+        )
+    try:
+        return PoliteHttpClient(
+            settings.research_contact_email,
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+    except ConfigError as exc:  # validated at startup; keep the message actionable
+        raise DiscoveryUnavailableError(str(exc)) from exc
+
+
+def _build_faculty_adapter(
+    settings: Settings,
+    source_urls: Sequence[str],
+    *,
+    institution: str | None,
+    country: str | None,
+    department: str | None,
+    with_papers: bool,
+) -> faculty_service.FacultyAdapter:
+    """Official faculty pages, optionally wrapped with ORCID-keyed OpenAlex papers."""
+
+    if not source_urls:
+        raise DiscoveryError("at least one --source-url is required for live faculty discovery.")
+    client = _research_client(settings)
+    sources = tuple(
+        FacultyPageSource(
+            url=url,
+            institution=(institution or "").strip(),
+            country=country,
+            department=department,
+        )
+        for url in source_urls
+    )
+    adapter: faculty_service.FacultyAdapter = OfficialPageFacultyAdapter(client, sources)
+    if with_papers:
+        # The contact is the same deployment value the client already validated.
+        adapter = OrcidPublicationsAdapter(adapter, client, settings.research_contact_email or "")
+    return adapter
+
+
+def _run_faculty_command(args: argparse.Namespace, settings: Settings) -> int:
+    """Query the faculty cache; live reads only from configured official pages (ADR-021)."""
+
+    if args.source_url and args.offline:
+        raise DiscoveryError(
+            "--offline cannot be combined with --source-url; choose cache-only or live."
+        )
+    adapter = (
+        _build_faculty_adapter(
+            settings,
+            args.source_url,
+            institution=args.source_institution,
+            country=args.source_country,
+            department=args.source_department,
+            with_papers=not args.no_papers,
+        )
+        if args.source_url
+        else None
+    )
+    with db.session(settings.database_path) as connection:
+        db.apply_migrations(connection)
+        result = faculty_service.search_faculty(
+            connection,
+            faculty_service.FacultyQuery(
+                research_area=args.research_area,
+                country=args.country,
+                institution=args.institution,
+                department=args.department,
+            ),
+            adapter=adapter,
+            offline=args.offline,
+            actor="cli",
+        )
+    print(
+        json.dumps(
+            {
+                "query": result.query.as_dict(),
+                "served_from_cache": result.served_from_cache,
+                "stale": result.stale,
+                "message": result.message,
+                "faculty": [_faculty_payload(member) for member in result.faculty],
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def _faculty_payload(member: faculty_service.FacultyMember) -> dict[str, object]:
+    return {
+        "id": member.id,
+        "full_name": member.full_name,
+        "title": member.title,
+        "institution": member.institution,
+        "department": member.department,
+        "country": member.country,
+        "profile_url": member.profile_url,
+        "evidence_urls": list(member.evidence_urls),
+        "research_interests": list(member.research_interests),
+        # Only a verified address is printed (ADR-021); an unverified one is
+        # represented by its status and the page it was found on.
+        "email": faculty_service.public_email(member),
+        "email_status": member.email_status,
+        "email_source_url": member.email_source_url,
+        "contact_sendable": member.contact_sendable,
+        "orcid": member.orcid,
+        "highlighted_publications": [
+            _publication_payload(publication) for publication in member.highlighted_publications
+        ],
+        "publication_count": len(member.publications),
+        "last_checked_at": member.last_checked_at,
+        "stale": member.stale,
+    }
+
+
+def _publication_payload(publication: faculty_service.Publication) -> dict[str, object]:
+    return {
+        "title": publication.title,
+        "year": publication.year,
+        "doi": publication.doi,
+        "url": publication.url,
+        "venue": publication.venue,
+        "authors": list(publication.authors),
+        "recent": publication.recent,
+        "stale": publication.stale,
+    }
 
 
 def _run_auth_command(args: argparse.Namespace, settings: Settings) -> int:

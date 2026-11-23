@@ -811,6 +811,16 @@ def browse_faculty(
     )
 
 
+def public_email(member: FacultyMember) -> str | None:
+    """The address a screen, API or CLI may display: verified ones only (ADR-021).
+
+    An unverified address is never shown, so it cannot be copied into outreach
+    by hand; callers show ``email_status`` and ``email_source_url`` instead.
+    """
+
+    return member.email if member.email_status == "verified" else None
+
+
 def get_faculty(
     connection: sqlite3.Connection, faculty_id: int, *, now: datetime | None = None
 ) -> FacultyMember:

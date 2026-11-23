@@ -689,3 +689,37 @@ is free and polite-pool friendly, but an author search by name merges people.
   (QA m1, #25).
 * The wrapper refuses to start without a valid contact email, so a request never
   goes out with an empty `mailto` (QA n1, #25).
+
+## ADR-021 — Only verified addresses are displayed; live faculty fetches are CLI-only
+
+**Status:** accepted 2026-11-24 · **Decided by:** Owner (options and recommendation by Dev) · **Spec:** `task.md` §3.5, §8, §13
+
+Phase 5d exposes faculty through the CLI, then the API and screens. Two product
+questions came first: how to show an address that is not verified, and who may
+trigger a live fetch of faculty pages and OpenAlex.
+
+**Options considered:**
+
+* Unverified address: (a) status plus source link only; (b) the address with an
+  "unverified, not sendable" warning; (c) hide the status and link too.
+* Live fetch: (a) CLI only for now; (b) the API too, with a rate limit and a
+  source allow-list; (c) a scheduled job only.
+
+**Decision (Owner, 2026-11-24):** option (a) for both.
+
+* Every display surface (CLI, API, web) shows an email address only when its
+  status is `verified` (`faculty.public_email`). An unverified address is shown
+  as `email_status: unverified` plus `email_source_url`, so a student can check
+  the evidence but cannot copy the address into an email by hand. The stored
+  value is kept for audit and re-verification.
+* Live faculty discovery runs only from the operator CLI (`faculty
+  --source-url`). The HTTP API and web screens read the cache only, so a student
+  request can never trigger a network call to a university or OpenAlex.
+
+**Consequences:**
+
+* A student sees fewer addresses than are stored. That is deliberate (§3.5:
+  unverified contacts are excluded from sending).
+* Fresh faculty data depends on the operator running the CLI until the scheduled
+  refresh worker exists (Phase 10). An API-triggered refresh, if wanted later,
+  needs its own ADR with rate limits and a source allow-list.

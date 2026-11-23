@@ -211,7 +211,8 @@ optimization) have no predecessor.
 | 5a | Faculty/publication cache, contact verification, attributed papers, faculty browse reads | merged (PR #23, ADR-018) |
 | 5b | Official-page `Person` parser, faculty page adapter, ORCID column (migration 8) | merged (PR #24, ADR-019) |
 | 5c | OpenAlex works attached by stated ORCID iD, attribution re-checked per work | merged (PR #25, ADR-020) |
-| 5c-fix | QA follow-ups on #25: truncated author lists, contact check, ADR-020 notes | this PR (ADR-020) |
+| 5c-fix | QA follow-ups on #25: truncated author lists, contact check, ADR-020 notes | merged (PR #26, ADR-020) |
+| 5d-1 | `faculty` CLI: offline cache reads, live official pages + ORCID papers, verified-only email output | this PR (ADR-021) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -786,3 +787,31 @@ makes the existing `register`/`login` safe to expose.
   beyond author 100 is documented; m2 ADR-020 states that an OpenAlex failure
   fails the faculty refresh and makes official contacts stale; n1 the wrapper
   requires a valid contact email; n2 the ORCID normalisation line is simplified.
+
+## 27. Phase 5d-1 notes (faculty CLI)
+
+* New `faculty` command. `--offline` reads the faculty cache with `--area`,
+  `--country`, `--institution` and `--department` filters (the same rule as
+  `faculty.discovered_faculty_matches`). `--source-url` (repeatable) builds
+  `OfficialPageFacultyAdapter` over the given pages, with `--source-institution`,
+  `--source-country` and `--source-department` as page configuration, and wraps
+  it in `OrcidPublicationsAdapter` unless `--no-papers` is passed. `--offline`
+  and `--source-url` are mutually exclusive.
+* A live command refuses before any request without `RIB_RESEARCH_CONTACT_EMAIL`.
+  The client construction is shared with `discover` (`cli._research_client`), so
+  both commands give the same actionable error.
+* Output: per person the profile URL, evidence URLs, interests, `email_status`,
+  `email_source_url`, `contact_sendable`, ORCID, up to three highlighted papers
+  (title, year, DOI, URL, venue, authors, recent, stale), the paper count,
+  `last_checked_at` and `stale`. `email` is printed only when verified
+  (`faculty.public_email`, ADR-021).
+* Owner decisions recorded in ADR-021: unverified addresses are shown as status
+  plus source link only; live faculty fetches stay CLI-only for now.
+* QA nit from #26: the unreachable `MAX_AUTHORS` check in `openalex._authors` is
+  removed; the 100-authorship limit already keeps lists under the cap.
+* Tests: 12 new (`tests/test_faculty_cli.py`) covering offline output with
+  papers, the hidden unverified address, institution/department filters, the
+  empty-cache message, the no-source error, the offline/live conflict, the
+  missing-contact error, builder plumbing with and without papers, the real
+  builder's adapter types and authority, builder refusals and `public_email`.
+  Full suite: 756 passed, 2 skipped.
