@@ -10,9 +10,10 @@ import pytest
 
 from research_inter_bridge import db
 from research_inter_bridge import faculty as fac
-from research_inter_bridge.errors import DiscoveryError
+from research_inter_bridge.errors import ConfigError, DiscoveryError
 from research_inter_bridge.http_source import SourceResponse
 from research_inter_bridge.openalex import (
+    LIST_AUTHORSHIP_LIMIT,
     OPENALEX_WORKS_URL,
     WORKS_PER_PERSON,
     OrcidPublicationsAdapter,
@@ -205,6 +206,47 @@ def test_an_author_list_with_a_missing_name_is_not_copied() -> None:
     )
 
     assert publication.authors == ()
+
+
+def test_a_truncated_author_list_is_not_copied() -> None:
+    # OpenAlex list endpoints return only the first 100 authorships (QA m1, #25).
+    flagged = work(is_authors_truncated=True)
+    at_limit = work(
+        id="https://openalex.org/W2",
+        doi="10.1234/big",
+        authorships=[author("Jane Doe", ORCID)]
+        + [author(f"Author {index}") for index in range(LIST_AUTHORSHIP_LIMIT - 1)],
+    )
+    below = work(
+        id="https://openalex.org/W3",
+        doi="10.1234/smaller",
+        authorships=[author("Jane Doe", ORCID)]
+        + [author(f"Author {index}") for index in range(LIST_AUTHORSHIP_LIMIT - 2)],
+    )
+
+    publications = publications_from_works({"results": [flagged, at_limit, below]}, ORCID, now=NOW)
+
+    assert [len(p.authors) for p in publications] == [0, 0, LIST_AUTHORSHIP_LIMIT - 1]
+
+
+def test_a_person_beyond_the_first_hundred_authorships_is_not_attributed() -> None:
+    # Documented miss (ADR-020): the per-work re-check sees only the authorships
+    # OpenAlex returned, so the work is dropped rather than attributed blindly.
+    authorships = [author(f"Author {index}") for index in range(LIST_AUTHORSHIP_LIMIT)]
+
+    payload = {"results": [work(authorships=authorships, is_authors_truncated=True)]}
+
+    assert publications_from_works(payload, ORCID, now=NOW) == ()
+
+
+@pytest.mark.parametrize("contact", ["", "   ", "not-an-email", None])
+def test_the_wrapper_needs_a_contact_email(contact: object) -> None:
+    with pytest.raises(ConfigError, match="RIB_RESEARCH_CONTACT_EMAIL"):
+        OrcidPublicationsAdapter(
+            Inner(()),
+            FakeClient({}),  # type: ignore[arg-type]
+            contact,  # type: ignore[arg-type]
+        )
 
 
 def test_a_work_without_a_title_or_any_link_is_skipped() -> None:

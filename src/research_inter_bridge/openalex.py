@@ -30,7 +30,7 @@ from urllib.parse import urlencode, urlsplit
 
 from . import discovery
 from . import faculty as fac
-from .errors import DiscoveryError
+from .errors import ConfigError, DiscoveryError
 from .http_source import PoliteHttpClient, decode_text
 
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
@@ -50,6 +50,11 @@ WORK_FIELDS = (
     "primary_location",
     "abstract_inverted_index",
 )
+
+#: OpenAlex list endpoints (``/works?filter=...``) return only a work's first 100
+#: authorships, in byline order; ``is_authors_truncated`` marks that, and only the
+#: single-work endpoint returns the full list (help.openalex.org, Work object).
+LIST_AUTHORSHIP_LIMIT = 100
 
 #: Length caps that match :mod:`faculty` validation. A value over its cap is left
 #: unknown (or the work skipped, for a title) so one odd record cannot fail the
@@ -118,9 +123,15 @@ class OrcidPublicationsAdapter:
         *,
         now: datetime | None = None,
     ) -> None:
+        contact = (contact_email or "").strip() if isinstance(contact_email, str) else ""
+        if not fac.is_plain_email(contact):
+            # An empty value would send `mailto=` and drop the polite-pool contact.
+            raise ConfigError(
+                "RIB_RESEARCH_CONTACT_EMAIL must be one email address before OpenAlex is queried."
+            )
         self._inner = inner
         self._client = client
-        self._contact = contact_email
+        self._contact = contact
         self._now = now
         self.name = f"{getattr(inner, 'name', inner.__class__.__name__)}+openalex"
         self.parser_version = f"{getattr(inner, 'parser_version', '0')}+openalex-1"
@@ -134,10 +145,10 @@ class OrcidPublicationsAdapter:
             if record.orcid is None:
                 enriched.append(record)
                 continue
-            # The inner adapter's value is unvalidated; normalising here keeps a
-            # malformed iD from reaching the network (validation rejects it later).
-            orcid = fac.normalise_orcid(record.orcid) or record.orcid
-            works = self._works(orcid)
+            # Validate before any request: a malformed iD from the inner adapter
+            # raises here instead of reaching the network.
+            orcid = fac.normalise_orcid(record.orcid)
+            works = self._works(orcid) if orcid is not None else ()
             enriched.append(replace(record, publications=(*record.publications, *works)))
         return tuple(enriched)
 
@@ -189,7 +200,9 @@ def _publication(work: Mapping[str, Any], latest_year: int) -> fac.DiscoveredPub
         url=url,
         doi=doi,
         year=_year(work.get("publication_year"), latest_year),
-        authors=_authors(work.get("authorships")),
+        authors=_authors(
+            work.get("authorships"), truncated=work.get("is_authors_truncated") is True
+        ),
         venue=venue,
         abstract=abstract_from_inverted_index(work.get("abstract_inverted_index")),
     )
@@ -223,14 +236,21 @@ def abstract_from_inverted_index(value: Any) -> str | None:
     return text
 
 
-def _authors(value: Any) -> tuple[str, ...]:
-    """Author display names in order; unknown (empty) if any name is missing.
+def _authors(value: Any, *, truncated: bool) -> tuple[str, ...]:
+    """Author display names in order; unknown (empty) unless the list is complete.
 
-    Dropping one nameless author would shift every later position, so a list
-    that cannot be copied faithfully is not copied at all.
+    Dropping one nameless author would shift every later position, and a list
+    cut at OpenAlex's 100-authorship limit is not the paper's author list, so
+    neither is copied. ``truncated`` is OpenAlex's own flag; a list of exactly
+    the limit is treated the same way, because ``select`` may omit the flag.
     """
 
-    if not isinstance(value, list) or len(value) > fac.MAX_AUTHORS:
+    if (
+        truncated
+        or not isinstance(value, list)
+        or len(value) >= LIST_AUTHORSHIP_LIMIT
+        or len(value) > fac.MAX_AUTHORS
+    ):
         return ()
     names: list[str] = []
     for authorship in value:
