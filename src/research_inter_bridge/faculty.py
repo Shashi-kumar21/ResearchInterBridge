@@ -9,9 +9,10 @@ professors and their papers, and keeps the same cache-first contract:
 * Identity is the official profile URL, never the name. Two people with the same
   name at one university are two rows; nothing here merges records by name.
 * An email is stored only together with the page that lists it. It is
-  ``verified`` only when that page is on the official profile's host; any other
-  listing is ``unverified`` and never sendable. Nothing in this module derives an
-  address from a naming pattern.
+  ``verified`` only when an ``official`` adapter (operator-configured
+  institutional pages) found it on the profile's host; every other listing is
+  ``unverified`` and never sendable. Nothing in this module derives an address
+  from a naming pattern.
 * Papers are linked to a person only because the source attributed them to that
   profile. Author names are display text and are never used to link a person.
 * A fresh query performs zero adapter calls; a failed refresh keeps the previous
@@ -37,6 +38,12 @@ from .errors import CacheError, DiscoveryError, DiscoveryUnavailableError, Facul
 
 #: Contact states shown to callers. ``unavailable`` means no page listed one.
 EMAIL_STATUSES: frozenset[str] = frozenset({"verified", "unverified", "unavailable"})
+
+#: How far an adapter's pages are trusted for contact details (ADR-018). Only an
+#: ``official`` adapter (operator-configured institutional pages) can produce a
+#: ``verified`` address. Everything else — ORCID, scholarly indexes, aggregators,
+#: personal sites — is ``none``, and its addresses stay ``unverified`` on any host.
+CONTACT_AUTHORITIES: frozenset[str] = frozenset({"official", "none"})
 
 MAX_PUBLICATIONS = 50
 MAX_AUTHORS = 500
@@ -229,10 +236,16 @@ class FacultyPage:
 
 
 class FacultyAdapter(Protocol):
-    """A faculty source. Network I/O happens only in ``search``."""
+    """A faculty source. Network I/O happens only in ``search``.
+
+    ``contact_authority`` is ``"official"`` only for an adapter that reads
+    operator-configured institutional pages. An adapter without the attribute is
+    treated as ``"none"``, so a new source can never verify an address by default.
+    """
 
     name: str
     parser_version: str
+    contact_authority: str
 
     def search(self, query: FacultyQuery) -> Sequence[DiscoveredFaculty]:
         """Return records for ``query``; raise :class:`DiscoveryError` on failure."""
@@ -435,14 +448,40 @@ def is_plain_email(value: str) -> bool:
     return len(cleaned) <= MAX_EMAIL_LENGTH and _EMAIL_RE.match(cleaned) is not None
 
 
-def email_status_for(email_source_url: str, profile_url: str) -> str:
-    """``verified`` when the listing page is on the official profile's host.
+def email_status_for(email_source_url: str, profile_url: str, *, authority: str) -> str:
+    """``verified`` only for an official adapter and a listing on the profile's host.
 
-    A leading ``www.`` is ignored. Any other host — a personal site, an
-    aggregator, a different domain — leaves the address ``unverified``.
+    Both conditions are required (§3.5: "officially listed and verified"). The
+    host check alone is not enough: an ORCID record or a shared host such as
+    ``sites.google.com`` puts a self-reported address on the same host as its
+    profile. A leading ``www.`` is ignored.
     """
 
+    if authority not in CONTACT_AUTHORITIES:
+        raise DiscoveryError(
+            f"contact authority {authority!r} is not one of "
+            f"{', '.join(sorted(CONTACT_AUTHORITIES))}."
+        )
+    if authority != "official":
+        return "unverified"
     return "verified" if _host(email_source_url) == _host(profile_url) else "unverified"
+
+
+def contact_authority_of(adapter: object) -> str:
+    """The adapter's declared contact authority; ``"none"`` when it declares none.
+
+    A declared value outside :data:`CONTACT_AUTHORITIES` is a configuration error
+    raised before any source is contacted, so a typo cannot silently change trust.
+    """
+
+    authority = getattr(adapter, "contact_authority", "none")
+    if not isinstance(authority, str) or authority not in CONTACT_AUTHORITIES:
+        raise DiscoveryError(
+            f"faculty adapter {getattr(adapter, 'name', adapter.__class__.__name__)!r} declares "
+            f"contact_authority {authority!r}; expected one of "
+            f"{', '.join(sorted(CONTACT_AUTHORITIES))}."
+        )
+    return authority
 
 
 def _validated_email(
@@ -561,7 +600,10 @@ def publication_key(record: DiscoveredPublication) -> str:
     if record.doi is not None:
         digest = hashlib.sha256(record.doi.encode("utf-8")).hexdigest()[:32]
         return cache.canonical_key("publication", "doi", digest)
-    digest = hashlib.sha256((record.url or "").strip().encode("utf-8")).hexdigest()[:32]
+    # The same normalisation as a profile URL (scheme, `www.`, trailing slash and
+    # fragment ignored), so `http://x/p` and `https://x/p/` are one paper.
+    normalised = normalise_profile_url(record.url or "")
+    digest = hashlib.sha256(normalised.encode("utf-8")).hexdigest()[:32]
     return cache.canonical_key("publication", "url", digest)
 
 
@@ -647,6 +689,7 @@ def search_faculty(
         )
 
     adapter_name = getattr(adapter, "name", adapter.__class__.__name__)
+    authority = contact_authority_of(adapter)
     try:
         records = tuple(
             validate_faculty(record, now=checked_at) for record in adapter.search(normalised)
@@ -685,7 +728,9 @@ def search_faculty(
     with db.transaction(connection):
         ids = tuple(
             dict.fromkeys(
-                _store_faculty(connection, record, adapter=adapter, now=checked_at)
+                _store_faculty(
+                    connection, record, adapter=adapter, authority=authority, now=checked_at
+                )
                 for record in records
             )
         )
@@ -782,6 +827,7 @@ def _store_faculty(
     record: DiscoveredFaculty,
     *,
     adapter: FacultyAdapter,
+    authority: str,
     now: datetime,
 ) -> int:
     now_iso = cache.to_timestamp(now)
@@ -852,7 +898,7 @@ def _store_faculty(
         )
     connection.execute("DELETE FROM faculty_contacts WHERE faculty_id = ?", (faculty_id,))
     if record.email is not None and record.email_source_url is not None:
-        status = email_status_for(record.email_source_url, record.profile_url)
+        status = email_status_for(record.email_source_url, record.profile_url, authority=authority)
         connection.execute(
             "INSERT INTO faculty_contacts "
             "(faculty_id, kind, value, source_url, status, verified_at) "

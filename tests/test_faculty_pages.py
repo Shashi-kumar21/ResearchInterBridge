@@ -313,6 +313,12 @@ def test_the_adapter_applies_the_shared_faculty_filter() -> None:
     assert japan == ()
 
 
+def test_the_official_page_adapter_is_the_contact_authority() -> None:
+    adapter = OfficialPageFacultyAdapter(FakeClient({}), (SOURCE,))  # type: ignore[arg-type]
+
+    assert fac.contact_authority_of(adapter) == "official"
+
+
 def test_the_adapter_needs_a_configured_page() -> None:
     with pytest.raises(DiscoveryError, match="at least one configured source URL"):
         OfficialPageFacultyAdapter(FakeClient({}), ())  # type: ignore[arg-type]

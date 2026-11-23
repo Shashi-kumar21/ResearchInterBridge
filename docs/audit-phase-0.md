@@ -658,10 +658,16 @@ makes the existing `register`/`login` safe to expose.
   it, so two people with one name are two rows and a renamed profile stays one.
 * An email is accepted only with the page that lists it (`email_source_url`) and
   only as a single plain address; obfuscated forms are rejected, never rewritten.
-  It is `verified` when that page is on the profile's host, otherwise
-  `unverified`; no address is `unavailable`. `contact_sendable` is true only for
-  a verified address on a fresh record. A refresh that no longer lists the address
-  removes it.
+  It is `verified` only when the adapter declares `contact_authority =
+  "official"` and that page is on the profile's host; otherwise `unverified`. No
+  address is `unavailable`. `contact_sendable` is true only for a verified address
+  on a fresh record. A refresh that no longer lists the address removes it.
+* QA review (PR #23): M1 fixed. Host equality alone verified an ORCID record's
+  own address and an address on a shared host such as `sites.google.com`; the
+  official-authority requirement closes both. m1 fixed: a URL-identified paper
+  now uses the normalised URL. m2 (last source overwrites shared paper
+  metadata), m3 (shared papers fail with every linked faculty member) and n1
+  (Python-side filtering) are recorded in ADR-018 as accepted for this slice.
 * Papers link to a person only through the record that attributes them
   (`faculty_publications`). Author names are stored in order as display text and
   never used for linking. A DOI (normalised, lower-case) or, without one, the
@@ -675,15 +681,16 @@ makes the existing `register`/`login` safe to expose.
 * `discovery.upsert_institution`, `upsert_department` and
   `cache_institution_and_department` now take explicit fields, so a program and
   a faculty member at one university share one browse node.
-* Tests: 67 new (`tests/test_faculty.py`) covering schema (no `user_id`, contact
+* Tests: 82 new (`tests/test_faculty.py`) covering schema (no `user_id`, contact
   status constraint), faculty/publication validation, DOI normalisation,
   same-name non-merging, URL identity, email verification and sendability,
+  official-versus-non-official contact authority (ORCID and shared hosts),
   stale-not-sendable, dropped addresses, paper ordering/highlighting/attribution,
   co-author sharing, zero-call cache hits, normalised adapter queries, empty-result
   caching, refresh, failure marking and audit, backoff, cold failure, offline
   filters, fingerprint separation, browse hierarchy, a shared institution with
   programs, paging and batched reads. Full suite on `dev` after PR #22:
-  644 passed, 2 skipped.
+  658 passed, 2 skipped.
 * Not done: a live faculty source (OpenAlex/Crossref plus official directory
   pages), the CLI and HTTP API for faculty, `faculty_count` on the
   institution/department browse rows, and the faculty screens. Those are 5b-5d.
@@ -699,6 +706,8 @@ makes the existing `register`/`login` safe to expose.
   `FacultyPageSource` pages. It reuses the JSON-LD collector and helpers in
   `program_pages.py`.
   * Name: `name`, or `givenName` + `familyName` only when both are stated.
+  * The adapter declares `contact_authority = "official"` (ADR-018, QA M1 on
+    PR #23), so its addresses can be verified when the host rule also holds.
   * Email: only the `email` property, `mailto:` and its query removed. An
     obfuscated or malformed value stays unknown (`faculty.is_plain_email`); it
     is never rewritten and never derived. The page it was read from becomes its
@@ -715,14 +724,14 @@ makes the existing `register`/`login` safe to expose.
 * `OfficialPageFacultyAdapter` reads configured pages once each, sequentially,
   raises on a failed page (no partial result), and filters with
   `faculty.discovered_faculty_matches`, the cache's own rule.
-* Tests: 41 new (`tests/test_faculty_pages.py`, ORCID cases in
+* Tests: 42 new (`tests/test_faculty_pages.py`, ORCID cases in
   `tests/test_faculty.py`) covering explicit fields, page-as-profile fallback,
   obfuscated/missing emails, `mailto:` cleanup, ORCID sources and check digits,
   name joining, `ProfilePage` de-duplication, directory pages, institution
   precedence, malformed blocks, the per-page cap, validation compatibility,
   sequential loading, failed pages, adapter filtering and an end-to-end cache
   fill with verified and unverified contacts. All HTTP is faked. Full suite:
-  685 passed, 2 skipped.
+  700 passed, 2 skipped.
 * Not done: CLI/API wiring for live faculty discovery (needs the same
   contact-email gate as `discover --source-url`), and fetching papers by ORCID
   (5c).

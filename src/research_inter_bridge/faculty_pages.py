@@ -97,6 +97,12 @@ class OfficialPageFacultyAdapter:
 
     name = "official_faculty_page"
     parser_version = "1"
+    #: Operator-configured institutional pages are the one source allowed to
+    #: verify an address (ADR-018); the host rule still applies on top.
+    contact_authority = "official"
+    #: Operator-configured institutional pages are the one source allowed to
+    #: verify an address (ADR-018); the host rule still applies on top.
+    contact_authority = "official"
 
     def __init__(self, client: PoliteHttpClient, sources: tuple[FacultyPageSource, ...]) -> None:
         if not sources:
