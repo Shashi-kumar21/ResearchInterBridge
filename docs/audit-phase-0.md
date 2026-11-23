@@ -208,7 +208,8 @@ optimization) have no predecessor.
 | 4b-2 | Research browse screen: institution → department → program, filters, stale labels | merged (PR #19, ADR-016) |
 | 4b-3a | Polite live-source HTTP boundary + explicit JSON-LD page parser | merged (PR #20, ADR-017) |
 | 4b-3b | Official-page adapter wired into `discover --source-url` with shared filters | merged (PR #21, ADR-017) |
-| 5a | Faculty/publication cache, contact verification, attributed papers, faculty browse reads | this PR (ADR-018) |
+| 5a | Faculty/publication cache, contact verification, attributed papers, faculty browse reads | PR #23 (ADR-018) |
+| 5b | Official-page `Person` parser, faculty page adapter, ORCID column (migration 8) | this PR (ADR-019) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -686,3 +687,42 @@ makes the existing `register`/`login` safe to expose.
 * Not done: a live faculty source (OpenAlex/Crossref plus official directory
   pages), the CLI and HTTP API for faculty, `faculty_count` on the
   institution/department browse rows, and the faculty screens. Those are 5b-5d.
+
+## 25. Phase 5b notes (official faculty pages and ORCID)
+
+* Migration 8 adds `faculty_members.orcid` (nullable, indexed). `faculty.py`
+  validates it with `normalise_orcid`: the resolver URL form is accepted, the
+  ISO 7064 11-2 check digit must hold, and the stored form is the bare iD. A
+  refresh that no longer states an iD clears it.
+* New `faculty_pages.py` reads schema.org JSON-LD `Person` objects (top level,
+  `@graph`, or a `ProfilePage`'s `mainEntity`/`about`) from operator-configured
+  `FacultyPageSource` pages. It reuses the JSON-LD collector and helpers in
+  `program_pages.py`.
+  * Name: `name`, or `givenName` + `familyName` only when both are stated.
+  * Email: only the `email` property, `mailto:` and its query removed. An
+    obfuscated or malformed value stays unknown (`faculty.is_plain_email`); it
+    is never rewritten and never derived. The page it was read from becomes its
+    `email_source_url`, so the ADR-018 host rule decides verified/unverified.
+  * ORCID: only from `sameAs`/`identifier` values that are ORCID URLs or
+    `propertyID: ORCID` values with a valid check digit. A bare number is not
+    accepted as an ORCID.
+  * The configured institution wins over the page's `worksFor`, which is often
+    a lab or department and would split one university into several browse
+    nodes. Country and department are configuration.
+  * A person stated twice on one page (a `ProfilePage` plus its `Person` node)
+    is one record; one page yields at most 200 people. Papers are not read from
+    pages.
+* `OfficialPageFacultyAdapter` reads configured pages once each, sequentially,
+  raises on a failed page (no partial result), and filters with
+  `faculty.discovered_faculty_matches`, the cache's own rule.
+* Tests: 41 new (`tests/test_faculty_pages.py`, ORCID cases in
+  `tests/test_faculty.py`) covering explicit fields, page-as-profile fallback,
+  obfuscated/missing emails, `mailto:` cleanup, ORCID sources and check digits,
+  name joining, `ProfilePage` de-duplication, directory pages, institution
+  precedence, malformed blocks, the per-page cap, validation compatibility,
+  sequential loading, failed pages, adapter filtering and an end-to-end cache
+  fill with verified and unverified contacts. All HTTP is faked. Full suite:
+  685 passed, 2 skipped.
+* Not done: CLI/API wiring for live faculty discovery (needs the same
+  contact-email gate as `discover --source-url`), and fetching papers by ORCID
+  (5c).

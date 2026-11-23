@@ -577,3 +577,36 @@ rules that are checked in code, before any live source exists.
   to a later slice rather than guessed.
 * A person with two official profile pages (a joint appointment, for example) is
   two rows. That is deliberate: merging needs explicit evidence, not similarity.
+
+## ADR-019 — Faculty pages are read from explicit schema.org data; ORCID keys papers
+
+**Status:** accepted 2026-11-24 · **Decided by:** Dev (within ADR-017, ADR-018) · **Spec:** `task.md` §3.5, §8
+
+ADR-018 made identity, contacts and paper links safe once a record exists. A
+live faculty source still has to produce records without turning prose into an
+email or a name search into a paper list. OpenAlex and Crossref index authors
+and works, but they do not publish official profile URLs or institutional
+addresses, and searching them by name would merge people.
+
+**Decision:**
+
+* Faculty records come from operator-configured official pages, parsed only from
+  schema.org JSON-LD `Person` objects, the same explicit-data rule as
+  `program_pages` (ADR-017). Nothing is read from HTML prose.
+* An email is read only from `email`. A value that is not one plain address is
+  left unknown, not repaired. The page that states it is the evidence, and
+  ADR-018's host rule decides whether it is verified.
+* An ORCID iD is stored only when the page states it as an ORCID (an `orcid.org`
+  URL or a `propertyID: ORCID` value) and its check digit holds. It is the only
+  key a later slice may use to fetch a person's papers from a scholarly index.
+* The configured institution, country and department take precedence over page
+  values, so the browse hierarchy does not fragment.
+
+**Consequences:**
+
+* A department that publishes no JSON-LD yields no faculty. That is the honest
+  result; supporting another explicit format needs its own parser and review.
+* Papers for a person without a stated ORCID iD stay empty until a source
+  attributes them explicitly. A name-based author search is not a fallback.
+* 5c can call OpenAlex `/authors/orcid:<id>` and `/works?filter=author.orcid:<id>`
+  through the existing polite client, with no new dependency.

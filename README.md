@@ -14,7 +14,9 @@ HTTP and explicit-page parsing boundary (ADR-017) and the CLI can read configure
 official pages live; the HTTP API still exposes cache-only browse reads. Phase
 5a adds the faculty and publication cache as a Python service (`faculty.py`,
 ADR-018): profile-URL identity, page-backed email verification and attributed
-papers, with no CLI, API route or live faculty source yet. OAuth and sending are
+papers. Phase 5b adds an official-page parser for schema.org `Person` records
+(`faculty_pages.py`, ADR-019) with stated-only emails and checksum-verified ORCID
+iDs; it is not wired to the CLI or API yet. OAuth and sending are
 not implemented, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
@@ -316,6 +318,7 @@ src/research_inter_bridge/    Python package
   facts.py                    fact extraction + confirm/reject/conflict workflow
   discovery.py                source-agnostic program cache, filters, browse reads
   faculty.py                  faculty/publication cache, contact verification, browse
+  faculty_pages.py            explicit schema.org Person parser + faculty page adapter
   http_source.py              polite contact-bearing HTTP GET boundary (ADR-017)
   program_pages.py            explicit schema.org JSON-LD program parser
   api/                        FastAPI app: sessions, CORS, consent and account routes

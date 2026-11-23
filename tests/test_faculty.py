@@ -777,3 +777,51 @@ class _ProgramAdapter:
                 official_url="https://www.example.edu/programs/research-internship",
             ),
         )
+
+
+# --------------------------------------------------------------------------- #
+# ORCID (Phase 5b)
+# --------------------------------------------------------------------------- #
+
+ORCID = "0000-0002-1825-0097"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (ORCID, ORCID),
+        (f"https://orcid.org/{ORCID}", ORCID),
+        (f"http://orcid.org/{ORCID}/", ORCID),
+        ("0000-0002-9079-593x", "0000-0002-9079-593X"),
+        (None, None),
+    ],
+)
+def test_orcid_normalisation(raw: str | None, expected: str | None) -> None:
+    assert fac.normalise_orcid(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw", ["0000-0002-1825-0098", "0000000218250097", "orcid", "https://example.org/0000"]
+)
+def test_an_invalid_orcid_is_rejected(raw: str) -> None:
+    with pytest.raises(DiscoveryError, match="not a valid ORCID"):
+        fac.normalise_orcid(raw)
+
+
+def test_an_orcid_is_stored_and_refreshed_with_the_profile(connection: sqlite3.Connection) -> None:
+    member = fill(connection, person(orcid=f"https://orcid.org/{ORCID}")).faculty[0]
+    refreshed = fac.search_faculty(
+        connection,
+        fac.FacultyQuery(country="Germany"),
+        adapter=FakeAdapter(records=(person(),)),
+        now=NOW + timedelta(days=31),
+    ).faculty[0]
+
+    assert member.orcid == ORCID
+    assert refreshed.id == member.id
+    assert refreshed.orcid is None
+
+
+def test_an_invalid_orcid_fails_validation() -> None:
+    with pytest.raises(DiscoveryError, match="not a valid ORCID"):
+        fac.validate_faculty(person(orcid="0000-0002-1825-0098"), now=NOW)
