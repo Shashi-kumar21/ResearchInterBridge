@@ -224,7 +224,12 @@ def list_items(
     today: date | None = None,
     weights: matching.MatchWeights = matching.DEFAULT_WEIGHTS,
 ) -> tuple[ShortlistEntry, ...]:
-    """The student's rows, best snapshot first; ineligible ones after the rest."""
+    """The student's rows, best snapshot first; ineligible ones after the rest.
+
+    Each row is re-scored to compute ``current`` (one full faculty or program
+    load per row, at most ``MAX_ITEMS``). Fine at this size; cache or paginate
+    if a screen starts polling it (QA f2 on #35).
+    """
 
     if status is not None and status not in ("shortlisted", "excluded"):
         raise ShortlistError("status must be 'shortlisted' or 'excluded'.")
@@ -295,20 +300,42 @@ def excluded_targets(connection: sqlite3.Connection, user_id: int) -> frozenset[
 
 
 def export_payload(connection: sqlite3.Connection, user_id: int) -> list[dict[str, object]]:
-    """The student's shortlist for the account data export."""
+    """The student's shortlist for the account data export.
 
-    return [
-        {
-            "target_type": entry.target_type,
-            "target_id": entry.target_id,
-            "status": entry.status,
-            "created_at": entry.created_at,
-            "score": None if entry.snapshot is None else entry.snapshot.score,
-            "eligibility": None if entry.snapshot is None else entry.snapshot.eligibility,
-            "evaluated_on": None if entry.snapshot is None else entry.snapshot.evaluated_on,
-        }
-        for entry in list_items(connection, user_id)
-    ]
+    Every stored snapshot is included with its factors and gaps, because they
+    can quote the student's own keywords and dates (QA f1 on #35).
+    """
+
+    items: list[dict[str, object]] = []
+    for row in connection.execute(
+        "SELECT * FROM shortlist_items WHERE user_id = ? ORDER BY id", (user_id,)
+    ).fetchall():
+        snapshots = connection.execute(
+            "SELECT score, eligibility, scoring_version, evaluated_on, result_json, created_at "
+            "FROM match_scores WHERE shortlist_item_id = ? AND user_id = ? ORDER BY id",
+            (int(row["id"]), user_id),
+        ).fetchall()
+        items.append(
+            {
+                "target_type": str(row["target_type"]),
+                "target_id": int(row["target_id"]),
+                "status": str(row["status"]),
+                "created_at": str(row["created_at"]),
+                "updated_at": str(row["updated_at"]),
+                "snapshots": [
+                    {
+                        "score": int(snapshot["score"]),
+                        "eligibility": str(snapshot["eligibility"]),
+                        "scoring_version": str(snapshot["scoring_version"]),
+                        "evaluated_on": str(snapshot["evaluated_on"]),
+                        "created_at": str(snapshot["created_at"]),
+                        "result": json.loads(snapshot["result_json"]),
+                    }
+                    for snapshot in snapshots
+                ],
+            }
+        )
+    return items
 
 
 # --------------------------------------------------------------------------- #
