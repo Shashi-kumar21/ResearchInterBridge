@@ -207,6 +207,61 @@ describe("FacultyList", () => {
     expect(screen.getByText(/Author list not stored/)).toBeVisible();
   });
 
+  it("keeps a failed details read inside the card with its own retry", async () => {
+    let detailCalls = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (/\/api\/research\/faculty\/1$/.test(url)) {
+        detailCalls += 1;
+        return Promise.resolve(
+          detailCalls === 1
+            ? json({ error: { code: "http_error", message: "detail read failed." } }, 500)
+            : json({ ...JANE, publications: [{ ...PAPER, abstract: null }] }),
+        );
+      }
+      return Promise.resolve(facultyPage([JANE]));
+    });
+    const user = userEvent.setup();
+    renderList();
+
+    await screen.findByRole("heading", { name: "Jane Doe" });
+    await user.click(screen.getByRole("button", { name: "Details for Jane Doe" }));
+    expect(await screen.findByText("detail read failed.")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Retry details for Jane Doe" }));
+
+    expect(await screen.findByText("All attributed papers (1)")).toBeVisible();
+    expect(screen.queryByText("detail read failed.")).toBeNull();
+    expect(detailCalls).toBe(2);
+  });
+
+  it("clears an earlier error when loading more succeeds", async () => {
+    let pageCalls = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (!url.includes("offset=1")) {
+        return Promise.resolve(facultyPage([JANE], 2));
+      }
+      pageCalls += 1;
+      return Promise.resolve(
+        pageCalls === 1
+          ? json({ error: { code: "http_error", message: "page read failed." } }, 500)
+          : facultyPage([RAVI], 2),
+      );
+    });
+    const user = userEvent.setup();
+    renderList();
+
+    await screen.findByRole("heading", { name: "Jane Doe" });
+    await user.click(screen.getByRole("button", { name: "Load more faculty" }));
+    expect(await screen.findByText("page read failed.")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Load more faculty" }));
+
+    expect(await screen.findByRole("heading", { name: "Ravi Kumar" })).toBeVisible();
+    expect(screen.queryByText("page read failed.")).toBeNull();
+  });
+
   it("pages with an offset", async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) =>
       Promise.resolve(
