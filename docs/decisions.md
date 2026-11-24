@@ -731,3 +731,56 @@ trigger a live fetch of faculty pages and OpenAlex.
 * Fresh faculty data depends on the operator running the CLI until the scheduled
   refresh worker exists (Phase 10). An API-triggered refresh, if wanted later,
   needs its own ADR with rate limits and a source allow-list.
+
+## ADR-022 — Deterministic, explainable matching with separate eligibility gates
+
+**Status:** accepted 2026-11-24 · **Decided by:** Owner (options and recommendation by Dev) · **Spec:** `task.md` §3.6, §13.4
+
+Phase 6 ranks cached faculty and programs for one student. The spec asks for a
+configurable 0-100 score that explains itself, keeps hard eligibility apart
+from soft ranking, and names unknowns.
+
+**Options considered and decisions (Owner, 2026-11-24):**
+
+1. Similarity: (a) deterministic keyword rules; (b) an LLM now; (c) embeddings.
+   **Chosen: (a).** A score is a pure function of the profile, the cached
+   record, the weights and the date, so it is reproducible, free, offline and
+   every point can be explained. An LLM layer may be added later behind the §6
+   provider interface, as an extra explanation rather than a replacement.
+2. Unstated eligibility: (a) `unknown`, flagged and listed as a gap; (b) treat
+   as fail; (c) treat as pass. **Chosen: (a).** A gate fails only when the
+   source *states* a condition the student does not meet.
+3. Default weights: (a) balanced; (b) research-heavy; (c) equal. **Chosen:
+   (a)** research interest 35, publication topics 20, skills/coursework 15,
+   internship timeline 10, country preference 10, recruitment evidence 5,
+   funding 5 (`matching.MatchWeights`, configurable).
+4. Storage: (a) a per-user snapshot only when an item is shortlisted; (b) every
+   computed score; (c) none. **Chosen: (a)**, implemented in Phase 6b.
+
+**Rules (`matching.py`, `SCORING_VERSION = "1"`):**
+
+* Keyword matching works on normalised phrases (case-folded, punctuation split,
+  trailing plural `s` folded). A student term that appears as a whole phrase in
+  the source (or contains it) earns full credit; one sharing only a significant
+  word (3+ letters, not a stopword) earns half. A factor reaches full credit at
+  three matched terms, so listing many keywords is not penalised.
+* Factors that do not apply to a target type (timeline and funding for a
+  person, publications for a program) are `not_applicable` and leave the
+  denominator, so 100 stays reachable. An `unknown` factor earns 0 and stays in
+  the denominator: missing evidence lowers the score and is named as a gap.
+* Program gates: degree level (a stated `bachelor`/`master`/`phd` compared with
+  the student's degree; dual degree fits bachelor and master) and application
+  window (stated `closed`, or a stated closing date in the past). Faculty have
+  no gates yet (`not_assessed`).
+* `rank` sorts every `ineligible` result after all others, whatever its score.
+* `inputs_fingerprint` hashes the scoring version, weights, date, the profile
+  fields a score reads and the target's id and last-checked time. Name, email,
+  phone and GPA are not inputs.
+
+**Consequences:**
+
+* Synonyms that share no word ("deep learning" vs "neural networks") do not
+  match. That is a known limit of option (a) and the reason for a later LLM or
+  taxonomy layer.
+* A record with little stated data scores low and carries many gaps rather than
+  being guessed upward.

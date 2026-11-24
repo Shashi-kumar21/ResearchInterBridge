@@ -19,7 +19,9 @@ papers. Phase 5b adds an official-page parser for schema.org `Person` records
 iDs. Phase 5c attaches papers from OpenAlex keyed only by that stated ORCID iD
 (`openalex.py`, ADR-020), and 5d-1 adds the `faculty` CLI command (ADR-021).
 5d-2 exposes the faculty cache read-only over the HTTP API, and 5d-3 adds
-faculty to the `/research` web screen. OAuth and sending are
+faculty to the `/research` web screen.
+Phase 6a adds an explainable matching service (`matching.py`, ADR-022); it
+is not wired to the CLI, API or web yet. OAuth and sending are
 not implemented, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
@@ -339,6 +341,7 @@ src/research_inter_bridge/    Python package
   faculty.py                  faculty/publication cache, contact verification, browse
   faculty_pages.py            explicit schema.org Person parser + faculty page adapter
   openalex.py                 ORCID-keyed OpenAlex works for faculty records
+  matching.py                 explainable 0-100 matching, eligibility gates, ranking
   http_source.py              polite contact-bearing HTTP GET boundary (ADR-017)
   program_pages.py            explicit schema.org JSON-LD program parser
   api/                        FastAPI app: sessions, CORS, consent and account routes

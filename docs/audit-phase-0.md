@@ -217,7 +217,9 @@ optimization) have no predecessor.
 | 5d-2 | Cache-only faculty API (`/api/research/faculty`, `/{id}`) and `faculty_count` on browse rows | PR #29 (ADR-021) |
 | 5d-2-fix | QA #29 n1/n2: summary list load, `idx_faculty_department` (migration 9) | merged (PR #30) |
 | 5d-3 | Faculty on the `/research` web screen, scoped by institution/department | PR #31 (ADR-021) |
-| 5d-3-fix | QA #31 UI nits: in-card detail retry, error cleared on load-more, unverified wording | this PR |
+| 5d-3-fix | QA #31 UI nits: in-card detail retry, error cleared on load-more, unverified wording | merged (PR #33) |
+| 5-chore | Next.js 16.4.6 and dev-dependency advisories (`npm audit` 0) | merged (PR #32) |
+| 6a | Explainable matching service: keyword factors, eligibility gates, ranking | this PR (ADR-022) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -895,3 +897,16 @@ makes the existing `register`/`login` safe to expose.
   unverified-email line now says the address was not confirmed on the
   person's official profile page (it may sit on the official host but come
   from a source without contact authority). Tests: 2 new.
+
+## 30. Phase 6a notes (matching service)
+
+* New `matching.py`: `score_faculty`, `score_program`, `rank`, `MatchWeights`,
+  `MatchResult`, `Factor`, `Gate`. Pure functions: no database write, no
+  network call, no LLM. Owner decisions recorded in ADR-022.
+* Each result has a 0-100 score, an eligibility verdict (`eligible`,
+  `ineligible`, `unknown`, `not_assessed`), per-factor status/credit/reason/
+  matched terms, a de-duplicated gap list, `SCORING_VERSION` and an inputs
+  fingerprint for later snapshots.
+* Not wired to the CLI, API or web yet; 6b adds the per-user shortlist with
+  snapshots, then the API and screens.
+* Tests: 24 new (`tests/test_matching.py`).
