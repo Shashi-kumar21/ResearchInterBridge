@@ -33,6 +33,10 @@ type Tab = "faculty" | "programs";
 
 /** Page size for the ranked list. The API caps a page at 100. */
 const PAGE_SIZE = 10;
+/** Largest page the API serves; used to re-read every loaded row at once. */
+const MAX_PAGE = 100;
+/** The API accepts at most 50 targets per shortlist request. */
+const MAX_SELECTION = 50;
 
 /** One row of either list, reduced to what the card needs. */
 interface MatchRow {
@@ -183,13 +187,23 @@ function Explanation({ match }: { readonly match: MatchExplanation }) {
 interface MatchCardProps {
   readonly row: MatchRow;
   readonly selected: boolean;
+  /** True when the selection is full and this row is not part of it. */
+  readonly selectionFull: boolean;
   readonly busy: boolean;
   readonly onSelect: (row: MatchRow, selected: boolean) => void;
   readonly onShortlist: (row: MatchRow) => void;
   readonly onExclude: (row: MatchRow) => void;
 }
 
-function MatchCard({ row, selected, busy, onSelect, onShortlist, onExclude }: MatchCardProps) {
+function MatchCard({
+  row,
+  selected,
+  selectionFull,
+  busy,
+  onSelect,
+  onShortlist,
+  onExclude,
+}: MatchCardProps) {
   const ineligible = row.match.eligibility === "ineligible";
   return (
     <li className="card research-match">
@@ -198,7 +212,7 @@ function MatchCard({ row, selected, busy, onSelect, onShortlist, onExclude }: Ma
           <input
             type="checkbox"
             checked={selected}
-            disabled={busy || row.shortlistStatus === "shortlisted"}
+            disabled={busy || row.shortlistStatus === "shortlisted" || selectionFull}
             aria-label={`Select ${row.name}`}
             onChange={(event) => onSelect(row, event.target.checked)}
           />
@@ -309,14 +323,22 @@ export function MatchBrowser() {
   const [truncated, setTruncated] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [shortlist, setShortlist] = useState<readonly ShortlistEntry[]>([]);
+  const [excluded, setExcluded] = useState<readonly ShortlistEntry[]>([]);
+  /** The target the last notice can undo (an exclusion), if any. */
+  const [undoTarget, setUndoTarget] = useState<ShortlistTarget | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const requestId = useRef(0);
 
-  function loadPage(nextTab: Tab, nextFilters: Filters, offset: number): Promise<MatchPage<MatchRow>> {
+  function loadPage(
+    nextTab: Tab,
+    nextFilters: Filters,
+    offset: number,
+    limit: number = PAGE_SIZE,
+  ): Promise<MatchPage<MatchRow>> {
     const query = {
       area: nextFilters.area || undefined,
       country: nextFilters.country || undefined,
-      limit: PAGE_SIZE,
+      limit,
       offset,
     };
     return nextTab === "faculty"
@@ -324,9 +346,30 @@ export function MatchBrowser() {
       : listProgramMatches(query).then((page) => ({ ...page, items: page.items.map(programRow) }));
   }
 
+  /** Re-read as many ranked rows as are on screen, in API-sized pages (QA n2 on #39). */
+  async function reloadLoaded(count: number): Promise<MatchPage<MatchRow>> {
+    const wanted = Math.max(PAGE_SIZE, count);
+    let first = await loadPage(tab, filters, 0, Math.min(MAX_PAGE, wanted));
+    let items = [...first.items];
+    while (items.length < wanted && items.length < first.total) {
+      const next = await loadPage(tab, filters, items.length, Math.min(MAX_PAGE, wanted - items.length));
+      if (next.items.length === 0) {
+        break;
+      }
+      items = [...items, ...next.items];
+      first = { ...first, total: next.total, truncated: next.truncated };
+    }
+    return { ...first, items };
+  }
+
+  function applyShortlist(entries: readonly ShortlistEntry[]): void {
+    setShortlist(entries.filter((entry) => entry.status === "shortlisted"));
+    setExcluded(entries.filter((entry) => entry.status === "excluded"));
+  }
+
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadPage("faculty", NO_FILTERS, 0), fetchShortlist("shortlisted")])
+    Promise.all([loadPage("faculty", NO_FILTERS, 0), fetchShortlist()])
       .then(([page, list]) => {
         if (cancelled) {
           return;
@@ -334,7 +377,7 @@ export function MatchBrowser() {
         setRows(page.items);
         setTotal(page.total);
         setTruncated(page.truncated);
-        setShortlist(list.items);
+        applyShortlist(list.items);
         setState("ready");
       })
       .catch((failure: unknown) => {
@@ -412,29 +455,82 @@ export function MatchBrowser() {
       });
   }
 
-  /** Run a shortlist change, then re-read the ranked list and the shortlist. */
-  function change(action: () => Promise<unknown>, message: string): void {
+  /**
+   * Run a shortlist change. The changed cards are patched in place and only the
+   * shortlist is re-read, so loaded pages stay and nothing is re-scored (QA n2
+   * on #39; Owner priority: low latency, low cost). Only a restore re-reads the
+   * loaded rows, because the restored entry must reappear at its rank. A
+   * request token drops a stale result after a tab or filter change (QA n3).
+   */
+  function change(
+    action: () => Promise<unknown>,
+    message: string,
+    options: {
+      readonly patch?: (current: readonly MatchRow[]) => readonly MatchRow[];
+      readonly rerank?: boolean;
+      readonly undo?: ShortlistTarget;
+    } = {},
+  ): void {
+    const token = requestId.current + 1;
+    requestId.current = token;
+    const before = rows;
+    const loaded = rows.length;
     setBusy(true);
     setError(null);
     setNotice(null);
+    setUndoTarget(null);
     action()
-      .then(() => Promise.all([loadPage(tab, filters, 0), fetchShortlist("shortlisted")]))
+      .then(() =>
+        Promise.all([options.rerank ? reloadLoaded(loaded) : Promise.resolve(null), fetchShortlist()]),
+      )
       .then(([page, list]) => {
-        setRows(page.items);
-        setTotal(page.total);
-        setTruncated(page.truncated);
-        setShortlist(list.items);
+        if (requestId.current !== token) {
+          return;
+        }
+        if (page) {
+          setRows(page.items);
+          setTotal(page.total);
+          setTruncated(page.truncated);
+        } else if (options.patch) {
+          // `before` is the list the student acted on; every action is disabled
+          // while busy, so it cannot have changed since.
+          const next = options.patch(before);
+          setRows(next);
+          setTotal((count) => count - (before.length - next.length));
+        }
+        applyShortlist(list.items);
         setSelected(new Set());
         setNotice(message);
+        setUndoTarget(options.undo ?? null);
       })
       .catch(fail)
-      .finally(() => setBusy(false));
+      .finally(() => {
+        if (requestId.current === token) {
+          setBusy(false);
+        }
+      });
+  }
+
+  function markStatus(
+    targets: readonly ShortlistTarget[],
+    status: MatchRow["shortlistStatus"],
+  ): (current: readonly MatchRow[]) => readonly MatchRow[] {
+    const keys = new Set(targets.map(keyOf));
+    return (current) =>
+      current.map((row) => (keys.has(keyOf(row.target)) ? { ...row, shortlistStatus: status } : row));
+  }
+
+  function restore(target: ShortlistTarget, name: string): void {
+    change(() => removeFromShortlist(target), `${name} is back in your matches.`, { rerank: true });
   }
 
   function select(row: MatchRow, value: boolean): void {
     setSelected((current) => {
       const next = new Set(current);
       if (value) {
+        if (next.size >= MAX_SELECTION) {
+          return current;
+        }
         next.add(keyOf(row.target));
       } else {
         next.delete(keyOf(row.target));
@@ -451,6 +547,7 @@ export function MatchBrowser() {
     change(
       () => addToShortlist(targets),
       `Shortlisted ${targets.length} ${targets.length === 1 ? "entry" : "entries"}.`,
+      { patch: markStatus(targets, "shortlisted") },
     );
   }
 
@@ -547,7 +644,17 @@ export function MatchBrowser() {
       ) : null}
       {notice ? (
         <p className="hint" role="status">
-          {notice}
+          {notice}{" "}
+          {undoTarget ? (
+            <button
+              type="button"
+              className="button button-quiet"
+              disabled={busy}
+              onClick={() => restore(undoTarget, "The entry")}
+            >
+              Undo
+            </button>
+          ) : null}
         </p>
       ) : null}
 
@@ -573,6 +680,11 @@ export function MatchBrowser() {
             Shortlist selected ({selectedCount})
           </button>
         </div>
+        {selectedCount >= MAX_SELECTION ? (
+          <p className="hint">
+            You can shortlist up to {MAX_SELECTION} at a time. Shortlist these, then select more.
+          </p>
+        ) : null}
         {rows.length === 0 ? (
           <p className="hint">
             Nothing to rank for these filters. The cache only holds records a source returned, and
@@ -585,11 +697,24 @@ export function MatchBrowser() {
                 key={keyOf(row.target)}
                 row={row}
                 selected={selected.has(keyOf(row.target))}
+                selectionFull={selectedCount >= MAX_SELECTION && !selected.has(keyOf(row.target))}
                 busy={busy}
                 onSelect={select}
-                onShortlist={(item) => change(() => addToShortlist([item.target]), `Shortlisted ${item.name}.`)}
+                onShortlist={(item) =>
+                  change(() => addToShortlist([item.target]), `Shortlisted ${item.name}.`, {
+                    patch: markStatus([item.target], "shortlisted"),
+                  })
+                }
                 onExclude={(item) =>
-                  change(() => excludeFromMatches([item.target]), `${item.name} will no longer be suggested.`)
+                  change(
+                    () => excludeFromMatches([item.target]),
+                    `${item.name} will no longer be suggested.`,
+                    {
+                      patch: (current) =>
+                        current.filter((row) => keyOf(row.target) !== keyOf(item.target)),
+                      undo: item.target,
+                    },
+                  )
                 }
               />
             ))}
@@ -628,14 +753,56 @@ export function MatchBrowser() {
                 key={entry.id}
                 entry={entry}
                 busy={busy}
-                onRemove={(item) =>
+                onRemove={(item) => {
+                  const target = { type: item.target_type as MatchTargetType, id: item.target_id };
                   change(
-                    () => removeFromShortlist({ type: item.target_type as MatchTargetType, id: item.target_id }),
+                    () => removeFromShortlist(target),
                     `Removed ${item.target_name ?? "the entry"} from your shortlist.`,
-                  )
-                }
+                    { patch: markStatus([target], null) },
+                  );
+                }}
               />
             ))}
+          </ul>
+        )}
+      </section>
+
+      <section aria-labelledby="excluded-title">
+        <div className="section-head">
+          <h2 id="excluded-title">Excluded</h2>
+          <p className="counts">
+            {excluded.length} hidden from your matches
+          </p>
+        </div>
+        {excluded.length === 0 ? (
+          <p className="hint">Nothing excluded. Exclude a match to stop it being suggested.</p>
+        ) : (
+          <ul className="research-list" role="list">
+            {excluded.map((entry) => {
+              const name = entry.target_name ?? "No longer in the research cache";
+              return (
+                <li className="card research-excluded" key={entry.id}>
+                  <div className="card-head">
+                    <h3>{name}</h3>
+                  </div>
+                  <p className="hint">
+                    {entry.target_type === "faculty" ? "Faculty" : "Program"} · excluded{" "}
+                    {formatDate(entry.updated_at)}
+                  </p>
+                  <button
+                    type="button"
+                    className="button button-quiet"
+                    disabled={busy}
+                    aria-label={`Restore ${name} to your matches`}
+                    onClick={() =>
+                      restore({ type: entry.target_type as MatchTargetType, id: entry.target_id }, name)
+                    }
+                  >
+                    Restore
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

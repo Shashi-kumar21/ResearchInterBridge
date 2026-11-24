@@ -1027,3 +1027,20 @@ makes the existing `register`/`login` safe to expose.
   explainable matching as available.
 * Tests: 10 new (`web/components/match-browser.test.tsx`); the roadmap count
   test moves to 6 available, 4 planned.
+* QA review of #39 (REQUEST_CHANGES), fixed on the same branch:
+  * B1: an "Excluded" section lists excluded entries with a Restore button
+    (`DELETE /api/shortlist/{type}/{id}`), and the notice after an exclusion
+    offers Undo. The screen now reads the whole shortlist once and splits it
+    into shortlisted and excluded rows.
+  * n1: a multi-selection is capped at 50 (the API batch limit); further
+    checkboxes are disabled with a hint.
+  * n2: after shortlist, exclude or remove, the changed card is patched in place
+    and only the shortlist is re-read, so loaded pages stay and nothing is
+    re-scored (Owner priority: low latency, low cost). Only a restore re-reads
+    the loaded rows, in API-sized pages, so the entry reappears at its rank.
+  * n3: every change uses the request token, so a stale result is dropped
+    after a tab or filter change.
+  * Tests: 4 new (restore from Excluded, undo, loaded pages kept with no
+    re-scoring call, selection cap); the exclude test is scoped to the ranked
+    list.
+

@@ -120,6 +120,23 @@ function calls(): { url: string; method: string; body: unknown }[] {
 interface RouterState {
   shortlist: unknown[];
   faculty: unknown[];
+  excluded?: unknown[];
+  /** Every faculty row the fake API knows, so a restore can bring one back. */
+  all?: unknown[];
+}
+
+function excludedEntry(row: typeof JANE) {
+  return {
+    id: 100 + row.faculty.id,
+    target_type: "faculty",
+    target_id: row.faculty.id,
+    target_name: row.faculty.full_name,
+    status: "excluded",
+    snapshot: null,
+    current: null,
+    created_at: "2026-11-24T10:00:00Z",
+    updated_at: "2026-11-24T10:00:00Z",
+  };
 }
 
 function router(state: RouterState) {
@@ -127,13 +144,24 @@ function router(state: RouterState) {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url.includes("/api/match/faculty")) {
-      return Promise.resolve(page(state.faculty));
+      const params = new URL(url).searchParams;
+      const offset = Number(params.get("offset") ?? 0);
+      const limit = Number(params.get("limit") ?? 10);
+      return Promise.resolve(
+        json({
+          items: state.faculty.slice(offset, offset + limit),
+          total: state.faculty.length,
+          limit,
+          offset,
+          truncated: false,
+        }),
+      );
     }
     if (url.includes("/api/match/programs")) {
       return Promise.resolve(page([PHD]));
     }
     if (url.includes("/api/shortlist") && method === "GET") {
-      return Promise.resolve(json({ items: state.shortlist }));
+      return Promise.resolve(json({ items: [...state.shortlist, ...(state.excluded ?? [])] }));
     }
     if (url.endsWith("/api/shortlist") && method === "POST") {
       const items = JSON.parse(String(init?.body)).items as { type: string; id: number }[];
@@ -155,9 +183,11 @@ function router(state: RouterState) {
     }
     if (url.endsWith("/api/shortlist/exclude")) {
       const items = JSON.parse(String(init?.body)).items as { type: string; id: number }[];
-      state.faculty = (state.faculty as typeof JANE[]).filter(
-        (row) => !items.some((item) => item.id === row.faculty.id),
+      const gone = (state.faculty as typeof JANE[]).filter((row) =>
+        items.some((item) => item.id === row.faculty.id),
       );
+      state.faculty = (state.faculty as typeof JANE[]).filter((row) => !gone.includes(row));
+      state.excluded = [...(state.excluded ?? []), ...gone.map(excludedEntry)];
       return Promise.resolve(json({ changed: items, unchanged: [] }));
     }
     if (url.endsWith("/api/shortlist/refresh")) {
@@ -165,7 +195,21 @@ function router(state: RouterState) {
       return Promise.resolve(json({ changed: [], unchanged: [] }));
     }
     if (method === "DELETE") {
-      state.shortlist = [];
+      const id = Number(url.split("/").pop());
+      const wasExcluded = (state.excluded ?? []).some(
+        (entry) => (entry as { target_id: number }).target_id === id,
+      );
+      if (wasExcluded) {
+        state.excluded = (state.excluded ?? []).filter(
+          (entry) => (entry as { target_id: number }).target_id !== id,
+        );
+        const back = (state.all ?? []).find((row) => (row as typeof JANE).faculty.id === id);
+        if (back) {
+          state.faculty = [...state.faculty, back];
+        }
+      } else {
+        state.shortlist = [];
+      }
       return Promise.resolve(new Response(null, { status: 204 }));
     }
     return Promise.resolve(json({ error: { code: "not_found", message: "no route" } }, 404));
@@ -264,7 +308,8 @@ describe("MatchBrowser", () => {
     await user.click(screen.getByRole("button", { name: "Exclude Ravi Kumar" }));
 
     expect(await screen.findByText("Ravi Kumar will no longer be suggested.")).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Ravi Kumar" })).toBeNull();
+    const matches = screen.getByRole("heading", { name: "Faculty matches" }).closest("section") as HTMLElement;
+    expect(within(matches).queryByRole("heading", { name: "Ravi Kumar" })).toBeNull();
   });
 
   it("marks an out-of-date saved score and refreshes it", async () => {
@@ -349,4 +394,88 @@ describe("MatchBrowser", () => {
 
     expect(await screen.findByText(/More records matched than one request scores/)).toBeVisible();
   });
+
+  it("restores an excluded match from the Excluded list", async () => {
+    // QA B1 on #39: an exclusion must be reversible from the screen.
+    const state: RouterState = { shortlist: [], faculty: [JANE, RAVI], all: [JANE, RAVI] };
+    fetchMock.mockImplementation(router(state));
+    const user = userEvent.setup();
+    render(<MatchBrowser />);
+
+    await user.click(await screen.findByRole("button", { name: "Exclude Ravi Kumar" }));
+    await screen.findByText("Ravi Kumar will no longer be suggested.");
+    const excludedSection = screen.getByRole("heading", { name: "Excluded" }).closest("section") as HTMLElement;
+    expect(within(excludedSection).getByRole("heading", { name: "Ravi Kumar" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Restore Ravi Kumar to your matches" }));
+
+    expect(await screen.findByText("Ravi Kumar is back in your matches.")).toBeVisible();
+    const matches = screen.getByRole("heading", { name: "Faculty matches" }).closest("section") as HTMLElement;
+    expect(within(matches).getByRole("heading", { name: "Ravi Kumar" })).toBeVisible();
+    expect(within(excludedSection).getByText(/Nothing excluded/)).toBeVisible();
+    expect(
+      calls().some((call) => call.method === "DELETE" && call.url.endsWith("/api/shortlist/faculty/2")),
+    ).toBe(true);
+  });
+
+  it("offers an undo right after an exclusion", async () => {
+    const state: RouterState = { shortlist: [], faculty: [JANE, RAVI], all: [JANE, RAVI] };
+    fetchMock.mockImplementation(router(state));
+    const user = userEvent.setup();
+    render(<MatchBrowser />);
+
+    await user.click(await screen.findByRole("button", { name: "Exclude Ravi Kumar" }));
+    await user.click(await screen.findByRole("button", { name: "Undo" }));
+
+    expect(await screen.findByText("The entry is back in your matches.")).toBeVisible();
+    expect(screen.getAllByRole("heading", { name: "Ravi Kumar" })).toHaveLength(1);
+  });
+
+  it("keeps loaded pages and re-scores nothing after a shortlist change", async () => {
+    // QA n2 on #39 and the Owner's low-latency priority: patch the card instead.
+    const many = Array.from({ length: 12 }, (_, index) => ({
+      faculty: faculty(index + 1, `Person ${String(index + 1).padStart(2, "0")}`),
+      match: explanation(90 - index),
+      shortlist_status: null,
+    }));
+    fetchMock.mockImplementation(router({ shortlist: [], faculty: many }));
+    const user = userEvent.setup();
+    render(<MatchBrowser />);
+
+    await screen.findByRole("heading", { name: "Person 01" });
+    await user.click(screen.getByRole("button", { name: "Load more matches" }));
+    await screen.findByRole("heading", { name: "Person 12" });
+    const matchCallsBefore = calls().filter((call) => call.url.includes("/api/match/")).length;
+
+    await user.click(screen.getByRole("button", { name: "Shortlist Person 12" }));
+
+    expect(await screen.findByText("Shortlisted Person 12.")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Person 12" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Shortlist Person 12" })).toHaveTextContent("Shortlisted");
+    expect(calls().filter((call) => call.url.includes("/api/match/")).length).toBe(matchCallsBefore);
+  });
+
+  it("caps a multi-selection at 50, the API's batch limit", async () => {
+    const many = Array.from({ length: 51 }, (_, index) => ({
+      faculty: faculty(index + 1, `Person ${String(index + 1).padStart(2, "0")}`),
+      match: explanation(90),
+      shortlist_status: null,
+    }));
+    fetchMock.mockImplementation(router({ shortlist: [], faculty: many }));
+    const user = userEvent.setup();
+    render(<MatchBrowser />);
+
+    await screen.findByRole("heading", { name: "Person 01" });
+    for (let index = 0; index < 5; index += 1) {
+      await user.click(screen.getByRole("button", { name: "Load more matches" }));
+    }
+    await screen.findByRole("heading", { name: "Person 51" });
+    for (let index = 1; index <= 50; index += 1) {
+      await user.click(screen.getByRole("checkbox", { name: `Select Person ${String(index).padStart(2, "0")}` }));
+    }
+
+    expect(screen.getByRole("button", { name: "Shortlist selected (50)" })).toBeEnabled();
+    expect(screen.getByRole("checkbox", { name: "Select Person 51" })).toBeDisabled();
+    expect(screen.getByText(/up to 50 at a time/)).toBeVisible();
+  }, 30_000);
 });
