@@ -357,6 +357,7 @@ class Institution:
     website_url: str | None
     program_count: int
     department_count: int
+    faculty_count: int
     last_checked_at: str | None
     stale: bool
 
@@ -378,6 +379,7 @@ class Department:
     name: str
     website_url: str | None
     program_count: int
+    faculty_count: int
     last_checked_at: str | None
     stale: bool
 
@@ -921,7 +923,7 @@ def browse_institutions(
     offset: int = 0,
     now: datetime | None = None,
 ) -> InstitutionPage:
-    """Return one page of cached institutions with their program/department counts."""
+    """One page of cached institutions with program, department and faculty counts."""
 
     checked_at = now or datetime.now(UTC)
     country_filter = _query_text(country, "country", 200)
@@ -1003,7 +1005,9 @@ def _institution_rows(
                (SELECT COUNT(*) FROM programs AS p WHERE p.institution_id = i.id)
                    AS program_count,
                (SELECT COUNT(*) FROM departments AS d WHERE d.institution_id = i.id)
-                   AS department_count
+                   AS department_count,
+               (SELECT COUNT(*) FROM faculty_members AS f WHERE f.institution_id = i.id)
+                   AS faculty_count
         FROM institutions AS i
         {where}
         ORDER BY i.name, i.id
@@ -1017,7 +1021,9 @@ def _department_rows(connection: sqlite3.Connection, *, institution_id: int) -> 
         """
         SELECT d.id, d.institution_id, d.name, d.website_url,
                (SELECT COUNT(*) FROM programs AS p WHERE p.department_id = d.id)
-                   AS program_count
+                   AS program_count,
+               (SELECT COUNT(*) FROM faculty_members AS f WHERE f.department_id = d.id)
+                   AS faculty_count
         FROM departments AS d
         WHERE d.institution_id = ?
         ORDER BY d.name, d.id
@@ -1034,6 +1040,7 @@ def _institution_from_row(row: sqlite3.Row, state: tuple[str | None, bool]) -> I
         website_url=_row_text(row["website_url"]),
         program_count=int(row["program_count"]),
         department_count=int(row["department_count"]),
+        faculty_count=int(row["faculty_count"]),
         last_checked_at=state[0],
         stale=state[1],
     )
@@ -1046,6 +1053,7 @@ def _department_from_row(row: sqlite3.Row, state: tuple[str | None, bool]) -> De
         name=str(row["name"]),
         website_url=_row_text(row["website_url"]),
         program_count=int(row["program_count"]),
+        faculty_count=int(row["faculty_count"]),
         last_checked_at=state[0],
         stale=state[1],
     )

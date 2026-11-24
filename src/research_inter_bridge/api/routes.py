@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, File, Form, Query, Request, Response, UploadFile, status
 
 from .. import auth, consent, discovery, documents, facts, parsing, profiles, ratelimit
+from .. import faculty as faculty_service
 from ..errors import (
     AuthError,
     DocumentNotFoundError,
@@ -43,6 +44,9 @@ from .schemas import (
     FactOut,
     FactUpdateOut,
     FactUpdateRequest,
+    FacultyDetailOut,
+    FacultyListOut,
+    FacultyOut,
     HealthOut,
     InstitutionListOut,
     InstitutionOut,
@@ -53,6 +57,8 @@ from .schemas import (
     ProfileRequest,
     ProgramListOut,
     ProgramOut,
+    PublicationDetailOut,
+    PublicationOut,
     RegisterRequest,
     SessionOut,
 )
@@ -96,6 +102,7 @@ DISCOVERY_STATUS_CODES: dict[str, int] = {
     "invalid_discovery": status.HTTP_400_BAD_REQUEST,
     "program_missing": status.HTTP_404_NOT_FOUND,
     "institution_missing": status.HTTP_404_NOT_FOUND,
+    "faculty_missing": status.HTTP_404_NOT_FOUND,
     # No adapter is configured for live discovery; the browse routes never
     # raise this, but a future search route must not turn it into a 500.
     "discovery_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -230,6 +237,7 @@ def _institution_out(institution: discovery.Institution) -> InstitutionOut:
         website_url=institution.website_url,
         program_count=institution.program_count,
         department_count=institution.department_count,
+        faculty_count=institution.faculty_count,
         last_checked_at=institution.last_checked_at,
         stale=institution.stale,
     )
@@ -242,8 +250,72 @@ def _department_out(department: discovery.Department) -> DepartmentOut:
         name=department.name,
         website_url=department.website_url,
         program_count=department.program_count,
+        faculty_count=department.faculty_count,
         last_checked_at=department.last_checked_at,
         stale=department.stale,
+    )
+
+
+def _publication_out(publication: faculty_service.Publication) -> PublicationOut:
+    return PublicationOut(
+        id=publication.id,
+        title=publication.title,
+        year=publication.year,
+        doi=publication.doi,
+        url=publication.url,
+        venue=publication.venue,
+        authors=list(publication.authors),
+        recent=publication.recent,
+        last_checked_at=publication.last_checked_at,
+        stale=publication.stale,
+    )
+
+
+def _publication_detail_out(publication: faculty_service.Publication) -> PublicationDetailOut:
+    return PublicationDetailOut(
+        **_publication_out(publication).model_dump(), abstract=publication.abstract
+    )
+
+
+def _faculty_fields(member: faculty_service.FacultyMember) -> dict[str, Any]:
+    return {
+        "id": member.id,
+        "full_name": member.full_name,
+        "title": member.title,
+        "institution": member.institution,
+        "institution_id": member.institution_id,
+        "department": member.department,
+        "department_id": member.department_id,
+        "country": member.country,
+        "lab_name": member.lab_name,
+        "profile_url": member.profile_url,
+        "evidence_urls": list(member.evidence_urls),
+        "research_interests": list(member.research_interests),
+        # Only a verified address leaves the service layer (ADR-021).
+        "email": faculty_service.public_email(member),
+        "email_status": member.email_status,
+        "email_source_url": member.email_source_url,
+        "contact_sendable": member.contact_sendable,
+        "orcid": member.orcid,
+        "recruitment_evidence_url": member.recruitment_evidence_url,
+        "highlighted_publications": [
+            _publication_out(publication) for publication in member.highlighted_publications
+        ],
+        "publication_count": len(member.publications),
+        "confidence": member.confidence,
+        "last_checked_at": member.last_checked_at,
+        "stale": member.stale,
+    }
+
+
+def _faculty_out(member: faculty_service.FacultyMember) -> FacultyOut:
+    return FacultyOut(**_faculty_fields(member))
+
+
+def _faculty_detail_out(member: faculty_service.FacultyMember) -> FacultyDetailOut:
+    return FacultyDetailOut(
+        **_faculty_fields(member),
+        publications=[_publication_detail_out(publication) for publication in member.publications],
     )
 
 
@@ -884,3 +956,57 @@ def list_research_departments(
         limit=page.limit,
         offset=page.offset,
     )
+
+
+@router.get("/research/faculty", response_model=FacultyListOut, tags=["research"])
+def list_research_faculty(
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+    area: Annotated[str | None, Query(max_length=200)] = None,
+    country: Annotated[str | None, Query(max_length=200)] = None,
+    institution_id: Annotated[int | None, Query(ge=1)] = None,
+    department_id: Annotated[int | None, Query(ge=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=discovery.MAX_BROWSE_LIMIT)] = (
+        discovery.DEFAULT_BROWSE_LIMIT
+    ),
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> FacultyListOut:
+    """Browse the shared faculty cache; this never calls a source (ADR-021).
+
+    ``institution_id`` then ``department_id`` gives the university ->
+    department -> faculty hierarchy. ``email`` is present only when verified;
+    outreach must gate on ``contact_sendable``.
+    """
+
+    response.headers["Cache-Control"] = "no-store"
+    page = faculty_service.browse_faculty(
+        connection,
+        faculty_service.FacultyFilters(
+            research_area=area,
+            country=country,
+            institution_id=institution_id,
+            department_id=department_id,
+        ),
+        limit=limit,
+        offset=offset,
+    )
+    return FacultyListOut(
+        faculty=[_faculty_out(member) for member in page.faculty],
+        total=page.total,
+        limit=page.limit,
+        offset=page.offset,
+    )
+
+
+@router.get("/research/faculty/{faculty_id}", response_model=FacultyDetailOut, tags=["research"])
+def get_research_faculty(
+    faculty_id: int,
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+) -> FacultyDetailOut:
+    """Return one cached faculty member; an unknown id is ``404 faculty_missing``."""
+
+    response.headers["Cache-Control"] = "no-store"
+    return _faculty_detail_out(faculty_service.get_faculty(connection, faculty_id))
