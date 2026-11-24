@@ -476,3 +476,35 @@ def test_a_shortlist_change_is_visible_on_the_next_match_read(
         next(i for i in again if i["faculty"]["id"] == jane["faculty"]["id"])["shortlist_status"]
         == "shortlisted"
     )
+
+
+def test_the_ranked_cache_keeps_no_records_and_pages_load_summaries(
+    client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # QA B1 on #41 (hosting cost): caching full faculty records with papers and
+    # abstracts cost ~32 MB per list. Only ids, results and statuses are kept,
+    # and a page loads summaries (highlights and a count) for its rows only.
+    recommendations.clear_cache()
+    seed(settings)
+    sign_in(client)
+    loads: list[tuple[int, bool]] = []
+    real = fac._load_faculty
+
+    def spy(connection, ids, *, now, include_publications=True):  # type: ignore[no-untyped-def]
+        loads.append((len(ids), include_publications))
+        return real(connection, ids, now=now, include_publications=include_publications)
+
+    monkeypatch.setattr(fac, "_load_faculty", spy)
+
+    response = client.get("/api/match/faculty", params={"limit": 2})
+
+    assert response.status_code == 200
+    (entry,) = recommendations._cache.values()
+    ranked = entry[1]
+    assert len(ranked) == 3
+    for item in ranked:
+        assert not hasattr(item, "record")
+        assert set(item.__slots__) == {"target_id", "result", "shortlist_status"}
+    # The page itself is loaded as a 2-row summary, not as full records.
+    assert (2, False) in loads
+    assert all(row["faculty"]["publication_count"] == 0 for row in response.json()["items"])

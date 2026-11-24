@@ -25,6 +25,13 @@ low-latency, cheap to host and operate) and QA items 1, 2, n5 and n6.
   fields a score reads, the student's shortlist statuses, `include_excluded`,
   the date, the weights and `SCORING_VERSION`. A profile or shortlist change is
   therefore a miss. A list is never served to another student.
+* Only `(target id, MatchResult, shortlist status)` is cached, never the
+  records. QA measured the first version (full faculty records with papers and
+  abstracts) at about 32 MB per 300-member list, up to 8.2 GB per worker with
+  256 entries (B1 on #41). The page's rows are now loaded afterwards as browse
+  summaries (`include_publications=False`: highlights plus a count), which is
+  also all a list row returns (n1). A full load still happens once per cache
+  miss, because scoring needs every attributed paper (ADR-022, B1 on #34).
 * Records newly fetched by the operator CLI appear within the TTL.
   `recommendations.clear_cache()` drops everything.
 
@@ -34,7 +41,8 @@ low-latency, cheap to host and operate) and QA items 1, 2, n5 and n6.
 
 ## Tests
 
-* `tests/test_api_matching.py`: paging re-scores nothing (scoring calls are
+* `tests/test_api_matching.py`: the cache holds no records and a page loads a
+  summary for its rows only; paging re-scores nothing (scoring calls are
   counted), a profile change re-scores, a shortlist change shows on the next
   read, and the rate-limit test now expects unlimited listing.
 * `tests/test_shortlist.py`: listing never loads a full target (loaders are

@@ -15,6 +15,12 @@ database, the student, the filters, the profile fields a score reads, the
 student's shortlist statuses, the weights, the scoring version and the date, so
 any of those changing is a cache miss. A cached list belongs to one student and
 is never served to another. Newly fetched cache records appear within the TTL.
+
+Only ``(target id, MatchResult, shortlist status)`` is cached, never the
+records themselves: a full faculty list with papers and abstracts would cost
+tens of MB per entry (QA B1 on #41). The records for the requested page are
+loaded afterwards as browse summaries (highlighted papers and a count), which
+is also all a list row returns (QA n1).
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ CACHE_MAX_ENTRIES = 256
 
 T = TypeVar("T")
 
-_cache: OrderedDict[str, tuple[float, tuple[object, ...], bool]] = OrderedDict()
+_cache: OrderedDict[str, tuple[float, tuple[_RankedEntry, ...], bool]] = OrderedDict()
 _cache_lock = threading.Lock()
 
 
@@ -61,6 +67,15 @@ class Recommendation(Generic[T]):
     record: T
     result: matching.MatchResult
     #: ``"shortlisted"``, ``"excluded"`` or ``None``.
+    shortlist_status: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _RankedEntry:
+    """What the cache keeps per candidate: no record, no papers."""
+
+    target_id: int
+    result: matching.MatchResult
     shortlist_status: str | None
 
 
@@ -111,6 +126,10 @@ def faculty_matches(
         weights,
         lambda: _collect(page),
         lambda member: matching.score_faculty(profile, member, today=day, weights=weights),
+        lambda ids: faculty_service._load_faculty(
+            connection, ids, now=now, include_publications=False
+        ),
+        lambda member: member.id,
         limit=limit,
         offset=offset,
         include_excluded=include_excluded,
@@ -152,6 +171,8 @@ def program_matches(
         weights,
         lambda: _collect(page),
         lambda program: matching.score_program(profile, program, today=day, weights=weights),
+        lambda ids: discovery._load_programs(connection, ids, now=now),
+        lambda program: program.id,
         limit=limit,
         offset=offset,
         include_excluded=include_excluded,
@@ -182,6 +203,8 @@ def _ranked(
     weights: matching.MatchWeights,
     collect: Callable[[], tuple[list[T], bool]],
     score: Callable[[T], matching.MatchResult],
+    load: Callable[[Sequence[int]], Sequence[T]],
+    id_of: Callable[[T], int],
     *,
     limit: int,
     offset: int,
@@ -204,18 +227,30 @@ def _ranked(
         ranked, truncated = hit
     else:
         records, truncated = collect()
-        scored: list[Recommendation[T]] = []
+        scored: list[_RankedEntry] = []
         for record in records:
             result = score(record)
             status = statuses.get(result.target_id)
             if status == "excluded" and not include_excluded:
                 continue
-            scored.append(Recommendation(record=record, result=result, shortlist_status=status))
+            scored.append(_RankedEntry(result.target_id, result, status))
         scored.sort(key=lambda item: matching.rank_key(item.result))
         ranked = tuple(scored)
+        # The full records (papers, abstracts) are dropped here on purpose.
         _cache_put(key, ranked, truncated)
+    window = ranked[offset : offset + limit]
+    by_id = {id_of(record): record for record in load([entry.target_id for entry in window])}
+    items = tuple(
+        Recommendation(
+            record=by_id[entry.target_id],
+            result=entry.result,
+            shortlist_status=entry.shortlist_status,
+        )
+        for entry in window
+        if entry.target_id in by_id
+    )
     return RecommendationPage(
-        items=ranked[offset : offset + limit],  # type: ignore[arg-type]
+        items=items,
         total=len(ranked),
         limit=limit,
         offset=offset,
@@ -259,7 +294,7 @@ def _cache_key(
     ).hexdigest()
 
 
-def _cache_get(key: str) -> tuple[tuple[object, ...], bool] | None:
+def _cache_get(key: str) -> tuple[tuple[_RankedEntry, ...], bool] | None:
     with _cache_lock:
         entry = _cache.get(key)
         if entry is None:
@@ -272,7 +307,7 @@ def _cache_get(key: str) -> tuple[tuple[object, ...], bool] | None:
         return ranked, truncated
 
 
-def _cache_put(key: str, ranked: tuple[object, ...], truncated: bool) -> None:
+def _cache_put(key: str, ranked: tuple[_RankedEntry, ...], truncated: bool) -> None:
     with _cache_lock:
         _cache[key] = (time.monotonic(), ranked, truncated)
         _cache.move_to_end(key)
