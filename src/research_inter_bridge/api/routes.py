@@ -301,7 +301,7 @@ def _faculty_fields(member: faculty_service.FacultyMember) -> dict[str, Any]:
         "highlighted_publications": [
             _publication_out(publication) for publication in member.highlighted_publications
         ],
-        "publication_count": len(member.publications),
+        "publication_count": member.publication_count,
         "confidence": member.confidence,
         "last_checked_at": member.last_checked_at,
         "stale": member.stale,
@@ -990,6 +990,7 @@ def list_research_faculty(
         ),
         limit=limit,
         offset=offset,
+        include_publications=False,
     )
     return FacultyListOut(
         faculty=[_faculty_out(member) for member in page.faculty],

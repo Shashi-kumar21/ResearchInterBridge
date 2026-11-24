@@ -440,6 +440,16 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX IF NOT EXISTS idx_faculty_orcid ON faculty_members (orcid)",
         ),
     ),
+    Migration(
+        version=9,
+        name="faculty_department_index",
+        statements=(
+            # The department browse row counts faculty by department_id alone;
+            # idx_faculty_institution leads with institution_id and cannot serve
+            # that lookup (QA n2 on PR #29).
+            "CREATE INDEX IF NOT EXISTS idx_faculty_department ON faculty_members (department_id)",
+        ),
+    ),
 )
 
 
