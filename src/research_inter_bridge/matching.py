@@ -319,16 +319,17 @@ def score_program(
 def rank(results: Iterable[MatchResult]) -> tuple[MatchResult, ...]:
     """Best first. An ineligible result always sorts after every other result."""
 
-    return tuple(
-        sorted(
-            results,
-            key=lambda result: (
-                result.eligibility == "ineligible",
-                -result.score,
-                result.target_name.casefold(),
-                result.target_id,
-            ),
-        )
+    return tuple(sorted(results, key=rank_key))
+
+
+def rank_key(result: MatchResult) -> tuple[bool, int, str, int]:
+    """The sort key behind :func:`rank`, for callers that sort wrappers."""
+
+    return (
+        result.eligibility == "ineligible",
+        -result.score,
+        result.target_name.casefold(),
+        result.target_id,
     )
 
 

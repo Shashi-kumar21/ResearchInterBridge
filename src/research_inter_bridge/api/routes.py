@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, File, Form, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, File, Form, Path, Query, Request, Response, UploadFile, status
 
-from .. import auth, consent, discovery, documents, facts, parsing, profiles, ratelimit
+from .. import (
+    auth,
+    consent,
+    discovery,
+    documents,
+    facts,
+    matching,
+    parsing,
+    profiles,
+    ratelimit,
+    recommendations,
+)
 from .. import faculty as faculty_service
+from .. import shortlist as shortlist_service
 from ..errors import (
     AuthError,
     DocumentNotFoundError,
@@ -41,26 +53,39 @@ from .schemas import (
     FactApplyRequest,
     FactGroupOut,
     FactListOut,
+    FactorOut,
     FactOut,
     FactUpdateOut,
     FactUpdateRequest,
     FacultyDetailOut,
     FacultyListOut,
+    FacultyMatchListOut,
+    FacultyMatchOut,
     FacultyOut,
+    GateOut,
     HealthOut,
     InstitutionListOut,
     InstitutionOut,
     LoginRequest,
+    MatchOut,
     MeOut,
     ParseOut,
     ProfileOut,
     ProfileRequest,
     ProgramListOut,
+    ProgramMatchListOut,
+    ProgramMatchOut,
     ProgramOut,
     PublicationDetailOut,
     PublicationOut,
     RegisterRequest,
     SessionOut,
+    ShortlistChangeOut,
+    ShortlistChangeRequest,
+    ShortlistEntryOut,
+    ShortlistListOut,
+    ShortlistTarget,
+    SnapshotOut,
 )
 
 router = APIRouter(prefix="/api")
@@ -106,6 +131,12 @@ DISCOVERY_STATUS_CODES: dict[str, int] = {
     # No adapter is configured for live discovery; the browse routes never
     # raise this, but a future search route must not turn it into a 500.
     "discovery_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
+}
+
+SHORTLIST_STATUS_CODES: dict[str, int] = {
+    "invalid_shortlist": status.HTTP_400_BAD_REQUEST,
+    "shortlist_full": status.HTTP_409_CONFLICT,
+    "shortlist_item_missing": status.HTTP_404_NOT_FOUND,
 }
 
 #: Bytes read per call when draining an upload. The whole file is never trusted
@@ -316,6 +347,58 @@ def _faculty_detail_out(member: faculty_service.FacultyMember) -> FacultyDetailO
     return FacultyDetailOut(
         **_faculty_fields(member),
         publications=[_publication_detail_out(publication) for publication in member.publications],
+    )
+
+
+def _match_out(result: matching.MatchResult) -> MatchOut:
+    return MatchOut(
+        score=result.score,
+        eligibility=result.eligibility,
+        gates=[
+            GateOut(key=g.key, label=g.label, status=g.status, reason=g.reason)
+            for g in result.gates
+        ],
+        factors=[
+            FactorOut(
+                key=f.key,
+                label=f.label,
+                weight=f.weight,
+                credit=f.credit,
+                points=f.points,
+                status=f.status,
+                reason=f.reason,
+                matched=list(f.matched),
+            )
+            for f in result.factors
+        ],
+        gaps=list(result.gaps),
+        scoring_version=result.scoring_version,
+        evaluated_on=result.evaluated_on,
+    )
+
+
+def _snapshot_out(snapshot: shortlist_service.Snapshot) -> SnapshotOut:
+    stored = snapshot.result
+    return SnapshotOut(
+        score=snapshot.score,
+        eligibility=snapshot.eligibility,  # type: ignore[arg-type]
+        scoring_version=snapshot.scoring_version,
+        evaluated_on=snapshot.evaluated_on,
+        gates=[GateOut(**gate) for gate in stored.get("gates", [])],  # type: ignore[union-attr]
+        factors=[FactorOut(**factor) for factor in stored.get("factors", [])],  # type: ignore[union-attr]
+        gaps=list(stored.get("gaps", [])),  # type: ignore[call-overload]
+        created_at=snapshot.created_at,
+    )
+
+
+def _targets(payload: ShortlistChangeRequest) -> list[shortlist_service.Target]:
+    return [shortlist_service.Target(item.type, item.id) for item in payload.items]
+
+
+def _change_out(result: shortlist_service.ChangeResult) -> ShortlistChangeOut:
+    return ShortlistChangeOut(
+        changed=[ShortlistTarget(type=t.type, id=t.id) for t in result.changed],  # type: ignore[arg-type]
+        unchanged=[ShortlistTarget(type=t.type, id=t.id) for t in result.unchanged],  # type: ignore[arg-type]
     )
 
 
@@ -1011,3 +1094,188 @@ def get_research_faculty(
 
     response.headers["Cache-Control"] = "no-store"
     return _faculty_detail_out(faculty_service.get_faculty(connection, faculty_id))
+
+
+# --------------------------------------------------------------------------- #
+# matching and shortlist (Phase 6, ADR-022)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/match/faculty", response_model=FacultyMatchListOut, tags=["matching"])
+def match_faculty(
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+    area: Annotated[str | None, Query(max_length=200)] = None,
+    country: Annotated[str | None, Query(max_length=200)] = None,
+    institution_id: Annotated[int | None, Query(ge=1)] = None,
+    department_id: Annotated[int | None, Query(ge=1)] = None,
+    include_excluded: bool = False,
+    limit: Annotated[int, Query(ge=1, le=discovery.MAX_BROWSE_LIMIT)] = (
+        discovery.DEFAULT_BROWSE_LIMIT
+    ),
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> FacultyMatchListOut:
+    """Cached faculty ranked for the signed-in student, every point explained.
+
+    Cache-only; nothing is stored. A missing profile is ``404 profile_missing``.
+    """
+
+    response.headers["Cache-Control"] = "no-store"
+    page = recommendations.faculty_matches(
+        connection,
+        account.user_id,
+        faculty_service.FacultyFilters(
+            research_area=area,
+            country=country,
+            institution_id=institution_id,
+            department_id=department_id,
+        ),
+        limit=limit,
+        offset=offset,
+        include_excluded=include_excluded,
+    )
+    return FacultyMatchListOut(
+        items=[
+            FacultyMatchOut(
+                faculty=_faculty_out(item.record),
+                match=_match_out(item.result),
+                shortlist_status=item.shortlist_status,  # type: ignore[arg-type]
+            )
+            for item in page.items
+        ],
+        total=page.total,
+        limit=page.limit,
+        offset=page.offset,
+        truncated=page.truncated,
+    )
+
+
+@router.get("/match/programs", response_model=ProgramMatchListOut, tags=["matching"])
+def match_programs(
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+    area: Annotated[str | None, Query(max_length=200)] = None,
+    country: Annotated[str | None, Query(max_length=200)] = None,
+    department: Annotated[str | None, Query(max_length=200)] = None,
+    degree_level: Annotated[str | None, Query(max_length=200)] = None,
+    institution_id: Annotated[int | None, Query(ge=1)] = None,
+    department_id: Annotated[int | None, Query(ge=1)] = None,
+    include_excluded: bool = False,
+    limit: Annotated[int, Query(ge=1, le=discovery.MAX_BROWSE_LIMIT)] = (
+        discovery.DEFAULT_BROWSE_LIMIT
+    ),
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> ProgramMatchListOut:
+    """Cached programs ranked for the signed-in student; ineligible ones last."""
+
+    response.headers["Cache-Control"] = "no-store"
+    page = recommendations.program_matches(
+        connection,
+        account.user_id,
+        discovery.ProgramFilters(
+            research_area=area,
+            country=country,
+            department=department,
+            degree_level=degree_level,
+            institution_id=institution_id,
+            department_id=department_id,
+        ),
+        limit=limit,
+        offset=offset,
+        include_excluded=include_excluded,
+    )
+    return ProgramMatchListOut(
+        items=[
+            ProgramMatchOut(
+                program=_program_out(item.record),
+                match=_match_out(item.result),
+                shortlist_status=item.shortlist_status,  # type: ignore[arg-type]
+            )
+            for item in page.items
+        ],
+        total=page.total,
+        limit=page.limit,
+        offset=page.offset,
+        truncated=page.truncated,
+    )
+
+
+@router.get("/shortlist", response_model=ShortlistListOut, tags=["matching"])
+def list_shortlist(
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+    status_filter: Annotated[
+        Literal["shortlisted", "excluded"] | None, Query(alias="status")
+    ] = None,
+) -> ShortlistListOut:
+    """The signed-in student's shortlist with stored snapshots, best first."""
+
+    response.headers["Cache-Control"] = "no-store"
+    entries = shortlist_service.list_items(connection, account.user_id, status=status_filter)
+    return ShortlistListOut(
+        items=[
+            ShortlistEntryOut(
+                id=entry.id,
+                target_type=entry.target_type,  # type: ignore[arg-type]
+                target_id=entry.target_id,
+                target_name=entry.target_name,
+                status=entry.status,  # type: ignore[arg-type]
+                snapshot=None if entry.snapshot is None else _snapshot_out(entry.snapshot),
+                current=entry.current,
+                created_at=entry.created_at,
+                updated_at=entry.updated_at,
+            )
+            for entry in entries
+        ]
+    )
+
+
+@router.post("/shortlist", response_model=ShortlistChangeOut, tags=["matching"])
+def add_to_shortlist(
+    payload: ShortlistChangeRequest, account: CurrentAccount, connection: Connection
+) -> ShortlistChangeOut:
+    """Shortlist several targets at once; each gets a stored, explained score.
+
+    All or nothing: an unknown id (``404 faculty_missing``/``program_missing``)
+    or a missing profile adds nothing.
+    """
+
+    return _change_out(shortlist_service.add(connection, account.user_id, _targets(payload)))
+
+
+@router.post("/shortlist/exclude", response_model=ShortlistChangeOut, tags=["matching"])
+def exclude_from_matches(
+    payload: ShortlistChangeRequest, account: CurrentAccount, connection: Connection
+) -> ShortlistChangeOut:
+    """Hide targets from this student's matches (``include_excluded`` shows them)."""
+
+    return _change_out(shortlist_service.exclude(connection, account.user_id, _targets(payload)))
+
+
+@router.post("/shortlist/refresh", response_model=ShortlistChangeOut, tags=["matching"])
+def refresh_shortlist(account: CurrentAccount, connection: Connection) -> ShortlistChangeOut:
+    """Re-score shortlisted targets; a snapshot is stored only where it changed."""
+
+    return _change_out(shortlist_service.refresh(connection, account.user_id))
+
+
+@router.delete(
+    "/shortlist/{target_type}/{target_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    tags=["matching"],
+)
+def remove_from_shortlist(
+    target_type: Literal["faculty", "program"],
+    target_id: Annotated[int, Path(ge=1)],
+    account: CurrentAccount,
+    connection: Connection,
+) -> None:
+    """Forget one row, shortlisted or excluded, with its snapshots."""
+
+    shortlist_service.remove(
+        connection, account.user_id, shortlist_service.Target(target_type, target_id)
+    )

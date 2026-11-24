@@ -398,3 +398,117 @@ class FacultyListOut(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# --------------------------------------------------------------------------- #
+# matching and shortlist (Phase 6, ADR-022)
+# --------------------------------------------------------------------------- #
+
+
+class GateOut(BaseModel):
+    """A hard eligibility condition. ``unknown`` means the source did not say."""
+
+    key: str
+    label: str
+    status: Literal["pass", "fail", "unknown"]
+    reason: str
+
+
+class FactorOut(BaseModel):
+    key: str
+    label: str
+    weight: float
+    credit: float
+    points: float
+    status: Literal["met", "partial", "unmet", "unknown", "not_applicable"]
+    reason: str
+    matched: list[str]
+
+
+class MatchOut(BaseModel):
+    """An explained 0-100 score. An ``ineligible`` result is always ranked last."""
+
+    score: int
+    eligibility: Literal["eligible", "ineligible", "unknown", "not_assessed"]
+    gates: list[GateOut]
+    factors: list[FactorOut]
+    gaps: list[str]
+    scoring_version: str
+    evaluated_on: str
+
+
+class FacultyMatchOut(BaseModel):
+    faculty: FacultyOut
+    match: MatchOut
+    shortlist_status: Literal["shortlisted", "excluded"] | None
+
+
+class FacultyMatchListOut(BaseModel):
+    items: list[FacultyMatchOut]
+    total: int
+    limit: int
+    offset: int
+    #: True when more records matched than one request scores.
+    truncated: bool
+
+
+class ProgramMatchOut(BaseModel):
+    program: ProgramOut
+    match: MatchOut
+    shortlist_status: Literal["shortlisted", "excluded"] | None
+
+
+class ProgramMatchListOut(BaseModel):
+    items: list[ProgramMatchOut]
+    total: int
+    limit: int
+    offset: int
+    truncated: bool
+
+
+class ShortlistTarget(_StrictModel):
+    type: Literal["faculty", "program"]
+    id: int = Field(ge=1)
+
+
+class ShortlistChangeRequest(_StrictModel):
+    """A multi-select change; at most 50 targets per request."""
+
+    items: list[ShortlistTarget] = Field(min_length=1, max_length=50)
+
+
+class ShortlistChangeOut(BaseModel):
+    changed: list[ShortlistTarget]
+    unchanged: list[ShortlistTarget]
+
+
+class SnapshotOut(BaseModel):
+    """The explained score stored when the target was shortlisted or refreshed."""
+
+    score: int
+    eligibility: Literal["eligible", "ineligible", "unknown", "not_assessed"]
+    scoring_version: str
+    evaluated_on: str
+    gates: list[GateOut]
+    factors: list[FactorOut]
+    gaps: list[str]
+    created_at: str
+
+
+class ShortlistEntryOut(BaseModel):
+    id: int
+    target_type: Literal["faculty", "program"]
+    target_id: int
+    #: ``None`` when the cached record no longer exists.
+    target_name: str | None
+    status: Literal["shortlisted", "excluded"]
+    snapshot: SnapshotOut | None
+    #: False when the profile or record changed since the snapshot; refresh to
+    #: store a new one. ``None`` when there is nothing to compare.
+    current: bool | None
+    created_at: str
+    updated_at: str
+
+
+class ShortlistListOut(BaseModel):
+    items: list[ShortlistEntryOut]

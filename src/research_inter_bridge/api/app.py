@@ -26,6 +26,7 @@ from ..errors import (
     DocumentError,
     ProfileError,
     RateLimitError,
+    ShortlistError,
 )
 from ..logging import get_logger
 from .middleware import OriginGuardMiddleware
@@ -35,6 +36,7 @@ from .routes import (
     DISCOVERY_STATUS_CODES,
     DOCUMENT_STATUS_CODES,
     PROFILE_STATUS_CODES,
+    SHORTLIST_STATUS_CODES,
     router,
 )
 
@@ -183,6 +185,11 @@ def _install_error_handlers(app: FastAPI) -> None:
     async def _discovery_error(request: Request, exc: DiscoveryError) -> JSONResponse:
         # Messages name the field or the missing id, never a provider payload.
         status_code = DISCOVERY_STATUS_CODES.get(exc.code, status.HTTP_400_BAD_REQUEST)
+        return error_response(status_code, exc.code, str(exc))
+
+    @app.exception_handler(ShortlistError)
+    async def _shortlist_error(request: Request, exc: ShortlistError) -> JSONResponse:
+        status_code = SHORTLIST_STATUS_CODES.get(exc.code, status.HTTP_400_BAD_REQUEST)
         return error_response(status_code, exc.code, str(exc))
 
     @app.exception_handler(StarletteHTTPException)
