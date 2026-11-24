@@ -954,5 +954,8 @@ makes the existing `register`/`login` safe to expose.
     screen polls it).
   * f3 (process): noted. When QA is unreachable, Dev pings the Owner and does
     not ask for a merge.
-  * Tests: 4 new or extended in `tests/test_matching.py`, 1 extended in
-    `tests/test_shortlist.py`.
+  * QA blocker on #37: `SCORING_VERSION` bumped to `"2"` because n2 and n3
+    change scoring rules; a test shows a version bump makes an existing
+    snapshot non-current and refresh stores a new one.
+  * Tests: 4 new or extended in `tests/test_matching.py`; 1 new and 1
+    extended in `tests/test_shortlist.py`.

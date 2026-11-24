@@ -757,7 +757,7 @@ from soft ranking, and names unknowns.
 4. Storage: (a) a per-user snapshot only when an item is shortlisted; (b) every
    computed score; (c) none. **Chosen: (a)**, implemented in Phase 6b.
 
-**Rules (`matching.py`, `SCORING_VERSION = "1"`):**
+**Rules (`matching.py`, `SCORING_VERSION = "2"` since the QA #34 follow-ups changed the funding and reverse-phrase rules):**
 
 * Keyword matching works on normalised phrases (case-folded, punctuation split,
   trailing plural `s` folded). A student term that appears as a whole phrase in

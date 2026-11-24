@@ -255,6 +255,28 @@ def test_a_profile_change_marks_the_snapshot_stale_and_refresh_stores_one(
     assert connection.execute("SELECT COUNT(*) FROM match_scores").fetchone()[0] == 2
 
 
+def test_a_scoring_version_bump_makes_an_existing_snapshot_non_current(
+    connection: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # QA blocker on #37: changed rules must not leave old snapshots "current".
+    from research_inter_bridge import matching
+
+    ids = seed(connection)
+    user = student(connection)
+    sl.add(connection, user, [fac_target(ids, "Jane Doe")], today=TODAY)
+    assert sl.list_items(connection, user, today=TODAY)[0].current is True
+
+    monkeypatch.setattr(matching, "SCORING_VERSION", "next")
+
+    (entry,) = sl.list_items(connection, user, today=TODAY)
+    assert entry.current is False
+    assert entry.snapshot is not None
+    assert entry.snapshot.scoring_version == "2"
+    refreshed = sl.refresh(connection, user, today=TODAY)
+    assert len(refreshed.changed) == 1
+    assert sl.list_items(connection, user, today=TODAY)[0].snapshot.scoring_version == "next"  # type: ignore[union-attr]
+
+
 def test_students_never_see_each_others_rows(connection: sqlite3.Connection) -> None:
     ids = seed(connection)
     asha = student(connection)

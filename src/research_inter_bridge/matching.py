@@ -33,7 +33,7 @@ from .faculty import FacultyMember
 from .profiles import DegreeType, StudentProfile
 
 #: Bump when a rule changes, so stored snapshots say which rules produced them.
-SCORING_VERSION = "1"
+SCORING_VERSION = "2"
 
 #: Matched terms needed for full credit in a keyword factor. Saturating keeps a
 #: student with many keywords from being penalised for listing them.
