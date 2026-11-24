@@ -223,6 +223,7 @@ optimization) have no predecessor.
 | 6b | Per-user shortlist with score snapshots (migration 10), export, refresh | merged (PR #35, ADR-022) |
 | 6c | Matching and shortlist API (`/api/match/*`, `/api/shortlist*`) | merged (PR #36, ADR-022) |
 | 6-fix | QA post-merge #34/#35 follow-ups, `SCORING_VERSION` 2, `MatchingError` handler (QA #36 n2) | merged (PR #37, ADR-022) |
+| 6c-fix | Per-account rate limit on the scoring routes (QA #36 n1) | merged (PR #38) |
 | 6d | `/matches` web screen: ranked tabs, explanations, multi-select shortlist, exclude, saved scores | this PR (ADR-022) |
 
 Phase 2c-2 notes for reviewers:
@@ -993,6 +994,15 @@ makes the existing `register`/`login` safe to expose.
   logs the detail. It is 500, not 400, because neither cause (bad weights, a
   summary-loaded member) comes from the request. n1 (a per-user rate limit on
   `/api/match/*`) follows in its own PR.
+
+* QA #36 n1, fixed in `fix/match-rate-limit`: `ratelimit.MATCH_RULE`
+  (`match.score`, 60 per 300 s) is keyed by account (`user:<id>`, hashed like
+  every subject), not by address, so a shared campus NAT does not pool
+  students' budgets. It is checked by `GET /api/match/faculty`,
+  `GET /api/match/programs`, `POST /api/shortlist` and
+  `POST /api/shortlist/refresh`; reading the stored shortlist is not limited.
+  Test: a shared budget across the scoring routes, the 429 with `Retry-After`,
+  the unlimited listing, and a second account unaffected.
 
 ## 34. Phase 6d notes (matches web screen)
 
