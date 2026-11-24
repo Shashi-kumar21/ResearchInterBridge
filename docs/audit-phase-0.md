@@ -223,7 +223,8 @@ optimization) have no predecessor.
 | 6b | Per-user shortlist with score snapshots (migration 10), export, refresh | merged (PR #35, ADR-022) |
 | 6c | Matching and shortlist API (`/api/match/*`, `/api/shortlist*`) | merged (PR #36, ADR-022) |
 | 6-fix | QA post-merge #34/#35 follow-ups, `SCORING_VERSION` 2, `MatchingError` handler (QA #36 n2) | merged (PR #37, ADR-022) |
-| 6c-fix | Per-account rate limit on the scoring routes (QA #36 n1) | this PR |
+| 6c-fix | Per-account rate limit on the scoring routes (QA #36 n1) | merged (PR #38) |
+| 6d | `/matches` web screen: ranked tabs, explanations, multi-select shortlist, exclude, saved scores | merged (PR #39, ADR-022) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -1002,6 +1003,46 @@ makes the existing `register`/`login` safe to expose.
   `POST /api/shortlist/refresh`; reading the stored shortlist is not limited.
   Test: a shared budget across the scoring routes, the 429 with `Retry-After`,
   the unlimited listing, and a second account unaffected.
+
+## 34. Phase 6d notes (matches web screen)
+
+* New `/matches` page (`web/app/matches/page.tsx`) and
+  `web/components/match-browser.tsx`, linked as "Matches" in the header. The
+  Owner chose a separate page over a toggle inside `/research` (2026-11-24).
+* Faculty and Programs tabs read `/api/match/*` with area/country filters and
+  paging; `truncated` shows a hint. Each card has the score, an eligibility
+  label, failed gates listed first, a "Why this score" table (factors that do
+  not apply are hidden, not shown as zero) and the unknowns.
+* Multi-select: checkboxes plus "Shortlist selected (N)" send one
+  `POST /api/shortlist`. Single Shortlist and Exclude buttons per card. After
+  any change the ranked list and the shortlist are re-read.
+* "My shortlist" shows the saved score and date, an "Out of date" note when
+  `current` is false with a "Refresh saved scores" button, failed eligibility
+  at save time, and Remove. The screen never polls.
+* Without a profile (`404 profile_missing`) the screen links to `/onboarding`;
+  401 shows the signed-out panel; a 429 shows the wait time.
+* `web/lib/api.ts` gains the matching and shortlist types and calls;
+  `web/lib/errors.ts` maps `shortlist_full`, `shortlist_item_missing`,
+  `faculty_missing`, `program_missing` and `invalid_matching`. The roadmap marks
+  explainable matching as available.
+* Tests: 10 new (`web/components/match-browser.test.tsx`); the roadmap count
+  test moves to 6 available, 4 planned.
+* QA review of #39 (REQUEST_CHANGES), fixed on the same branch:
+  * B1: an "Excluded" section lists excluded entries with a Restore button
+    (`DELETE /api/shortlist/{type}/{id}`), and the notice after an exclusion
+    offers Undo. The screen now reads the whole shortlist once and splits it
+    into shortlisted and excluded rows.
+  * n1: a multi-selection is capped at 50 (the API batch limit); further
+    checkboxes are disabled with a hint.
+  * n2: after shortlist, exclude or remove, the changed card is patched in place
+    and only the shortlist is re-read, so loaded pages stay and nothing is
+    re-scored (Owner priority: low latency, low cost). Only a restore re-reads
+    the loaded rows, in API-sized pages, so the entry reappears at its rank.
+  * n3: every change uses the request token, so a stale result is dropped
+    after a tab or filter change.
+  * Tests: 4 new (restore from Excluded, undo, loaded pages kept with no
+    re-scoring call, selection cap); the exclude test is scoped to the ranked
+    list.
 * QA note on #38, fixed in `fix/shortlist-list-rate-limit`: `GET /api/shortlist`
   re-scores every stored row to compute `current` (up to 500 full loads), so it
   now spends the same `match.score` budget. The earlier note that "reading the

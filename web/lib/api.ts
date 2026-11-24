@@ -651,3 +651,149 @@ export function listResearchFaculty(
 export function getResearchFaculty(facultyId: number): Promise<ResearchFacultyDetail> {
   return request<ResearchFacultyDetail>(`/api/research/faculty/${facultyId}`);
 }
+
+// --------------------------------------------------------------------------- //
+// matching and shortlist (Phase 6, ADR-022)
+// --------------------------------------------------------------------------- //
+
+export type GateStatus = "pass" | "fail" | "unknown";
+export type FactorStatus = "met" | "partial" | "unmet" | "unknown" | "not_applicable";
+export type Eligibility = "eligible" | "ineligible" | "unknown" | "not_assessed";
+export type ShortlistStatus = "shortlisted" | "excluded";
+export type MatchTargetType = "faculty" | "program";
+
+/** A hard eligibility condition; `unknown` means the source did not state it. */
+export interface MatchGate {
+  readonly key: string;
+  readonly label: string;
+  readonly status: GateStatus;
+  readonly reason: string;
+}
+
+export interface MatchFactor {
+  readonly key: string;
+  readonly label: string;
+  readonly weight: number;
+  readonly credit: number;
+  readonly points: number;
+  readonly status: FactorStatus;
+  readonly reason: string;
+  readonly matched: readonly string[];
+}
+
+/** An explained 0-100 score. An `ineligible` result is always ranked last. */
+export interface MatchExplanation {
+  readonly score: number;
+  readonly eligibility: Eligibility;
+  readonly gates: readonly MatchGate[];
+  readonly factors: readonly MatchFactor[];
+  readonly gaps: readonly string[];
+  readonly scoring_version: string;
+  readonly evaluated_on: string;
+}
+
+export interface FacultyMatch {
+  readonly faculty: ResearchFaculty;
+  readonly match: MatchExplanation;
+  readonly shortlist_status: ShortlistStatus | null;
+}
+
+export interface ProgramMatch {
+  readonly program: ResearchProgram;
+  readonly match: MatchExplanation;
+  readonly shortlist_status: ShortlistStatus | null;
+}
+
+export interface MatchPage<T> {
+  readonly items: readonly T[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+  /** True when more records matched than one request scores. */
+  readonly truncated: boolean;
+}
+
+export interface MatchFilters {
+  readonly area?: string;
+  readonly country?: string;
+  readonly include_excluded?: boolean;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export interface ShortlistTarget {
+  readonly type: MatchTargetType;
+  readonly id: number;
+}
+
+export interface ShortlistChange {
+  readonly changed: readonly ShortlistTarget[];
+  readonly unchanged: readonly ShortlistTarget[];
+}
+
+export interface ShortlistSnapshot {
+  readonly score: number;
+  readonly eligibility: Eligibility;
+  readonly scoring_version: string;
+  readonly evaluated_on: string;
+  readonly gates: readonly MatchGate[];
+  readonly factors: readonly MatchFactor[];
+  readonly gaps: readonly string[];
+  readonly created_at: string;
+}
+
+export interface ShortlistEntry {
+  readonly id: number;
+  readonly target_type: MatchTargetType;
+  readonly target_id: number;
+  /** `null` when the cached record no longer exists. */
+  readonly target_name: string | null;
+  readonly status: ShortlistStatus;
+  readonly snapshot: ShortlistSnapshot | null;
+  /** `false` when the profile or record changed since the snapshot. */
+  readonly current: boolean | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface ShortlistList {
+  readonly items: readonly ShortlistEntry[];
+}
+
+function matchQuery(filters: MatchFilters): string {
+  return researchQuery({
+    area: filters.area,
+    country: filters.country,
+    include_excluded: filters.include_excluded ? "true" : undefined,
+    limit: filters.limit,
+    offset: filters.offset,
+  });
+}
+
+export function listFacultyMatches(filters: MatchFilters = {}): Promise<MatchPage<FacultyMatch>> {
+  return request<MatchPage<FacultyMatch>>(`/api/match/faculty${matchQuery(filters)}`);
+}
+
+export function listProgramMatches(filters: MatchFilters = {}): Promise<MatchPage<ProgramMatch>> {
+  return request<MatchPage<ProgramMatch>>(`/api/match/programs${matchQuery(filters)}`);
+}
+
+export function fetchShortlist(status?: ShortlistStatus): Promise<ShortlistList> {
+  return request<ShortlistList>(`/api/shortlist${researchQuery({ status })}`);
+}
+
+export function addToShortlist(items: readonly ShortlistTarget[]): Promise<ShortlistChange> {
+  return request<ShortlistChange>("/api/shortlist", { method: "POST", body: { items } });
+}
+
+export function excludeFromMatches(items: readonly ShortlistTarget[]): Promise<ShortlistChange> {
+  return request<ShortlistChange>("/api/shortlist/exclude", { method: "POST", body: { items } });
+}
+
+export function refreshShortlist(): Promise<ShortlistChange> {
+  return request<ShortlistChange>("/api/shortlist/refresh", { method: "POST" });
+}
+
+export function removeFromShortlist(target: ShortlistTarget): Promise<void> {
+  return request<void>(`/api/shortlist/${target.type}/${target.id}`, { method: "DELETE" });
+}
