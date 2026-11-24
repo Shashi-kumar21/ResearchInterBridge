@@ -1002,3 +1002,9 @@ makes the existing `register`/`login` safe to expose.
   `POST /api/shortlist/refresh`; reading the stored shortlist is not limited.
   Test: a shared budget across the scoring routes, the 429 with `Retry-After`,
   the unlimited listing, and a second account unaffected.
+* QA note on #38, fixed in `fix/shortlist-list-rate-limit`: `GET /api/shortlist`
+  re-scores every stored row to compute `current` (up to 500 full loads), so it
+  now spends the same `match.score` budget. The earlier note that "reading the
+  stored shortlist is not limited" no longer holds; the test now expects the
+  listing to be refused once the budget is spent.
+

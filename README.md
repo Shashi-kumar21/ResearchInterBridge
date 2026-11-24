@@ -207,7 +207,7 @@ if the database cannot be opened.
 | `GET` | `/api/research/institutions/{id}/departments` | cookie | cached departments of one institution, with program/faculty counts; `404 institution_missing` |
 | `GET` | `/api/research/faculty` | cookie | browse cached faculty (`area`, `country`, `institution_id`, `department_id`, `limit`, `offset`); `email` only when verified, gate outreach on `contact_sendable` |
 | `GET` | `/api/research/faculty/{id}` | cookie | one cached faculty member with every attributed paper (with abstracts); `404 faculty_missing` |
-| `GET` | `/api/match/faculty` | cookie | cached faculty ranked for the student, every factor explained (faculty filters, `include_excluded`, paging, `truncated`); `404 profile_missing`; shares a per-account budget of 60 scoring calls per 5 minutes with `/api/match/programs`, `POST /api/shortlist` and `/api/shortlist/refresh` (`429 rate_limited`) |
+| `GET` | `/api/match/faculty` | cookie | cached faculty ranked for the student, every factor explained (faculty filters, `include_excluded`, paging, `truncated`); `404 profile_missing`; shares a per-account budget of 60 scoring calls per 5 minutes with `/api/match/programs`, `GET`/`POST /api/shortlist` and `/api/shortlist/refresh` (`429 rate_limited`) |
 | `GET` | `/api/match/programs` | cookie | cached programs ranked for the student; gates shown, ineligible ones last (program filters, `include_excluded`, paging) |
 | `GET` | `/api/shortlist` | cookie | the student's shortlist with stored snapshots and a `current` flag (`status=shortlisted|excluded`) |
 | `POST` | `/api/shortlist` | cookie | shortlist up to 50 targets `{items:[{type,id}]}`, all or nothing; stores an explained snapshot |
