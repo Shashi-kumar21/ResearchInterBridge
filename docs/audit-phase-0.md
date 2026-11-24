@@ -212,7 +212,7 @@ optimization) have no predecessor.
 | 5b | Official-page `Person` parser, faculty page adapter, ORCID column (migration 8) | merged (PR #24, ADR-019) |
 | 5c | OpenAlex works attached by stated ORCID iD, attribution re-checked per work | merged (PR #25, ADR-020) |
 | 5c-fix | QA follow-ups on #25: truncated author lists, contact check, ADR-020 notes | merged (PR #26, ADR-020) |
-| 5d-1 | `faculty` CLI: offline cache reads, live official pages + ORCID papers, verified-only email output | PR #27 (ADR-021) |
+| 5d-1 | `faculty` CLI: offline cache reads, live official pages + ORCID papers, verified-only email output | merged (PR #27, ADR-021) |
 | 5d-1-fix | QA #27 follow-ups: `--source-institution` required, stale verified address documented | this PR (ADR-021) |
 
 Phase 2c-2 notes for reviewers:
