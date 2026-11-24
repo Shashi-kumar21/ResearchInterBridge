@@ -215,7 +215,8 @@ optimization) have no predecessor.
 | 5d-1 | `faculty` CLI: offline cache reads, live official pages + ORCID papers, verified-only email output | merged (PR #27, ADR-021) |
 | 5d-1-fix | QA #27 follow-ups: `--source-institution` required, stale verified address documented | merged (PR #28, ADR-021) |
 | 5d-2 | Cache-only faculty API (`/api/research/faculty`, `/{id}`) and `faculty_count` on browse rows | PR #29 (ADR-021) |
-| 5d-2-fix | QA #29 n1/n2: summary list load, `idx_faculty_department` (migration 9) | this PR |
+| 5d-2-fix | QA #29 n1/n2: summary list load, `idx_faculty_department` (migration 9) | merged (PR #30) |
+| 5d-3 | Faculty on the `/research` web screen, scoped by institution/department | this PR (ADR-021) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -862,3 +863,27 @@ makes the existing `register`/`login` safe to expose.
   * Tests: 4 new in `tests/test_faculty.py` (summary vs full highlights and
     count, only highlighted papers are read, zero-paper count, query plan uses
     the new index).
+
+## 29. Phase 5d-3 notes (faculty web screen)
+
+* `/research` gains a faculty section (`web/components/faculty-list.tsx`) under
+  the programs. It follows the drill-down: the whole cache, then the chosen
+  institution (`institution_id`), then the chosen department (`department_id`).
+  The area filter applies, and so does the country filter until an institution
+  is chosen. Institution and department rows show `faculty_count`.
+* The list remounts per scope (`key={facultyScopeKey(scope)}`), so a scope
+  change starts a fresh first page without resetting state inside an effect.
+  Stale responses are dropped by a request token, as in the program browser.
+* Contact display follows ADR-021. A verified address is shown as plain text
+  (no `mailto:`) with a link to the official page it was found on; a stale
+  record says the address is orientation only. An unverified address is never
+  rendered; the card says so and links to where it was found. No address shows
+  "No email address is stated on the official page."
+* Each card shows up to three highlighted papers, the paper count and the ORCID
+  iD used to link them. Details re-read `/api/research/faculty/{id}` for every
+  paper, with authors (or a note that the list was not stored), DOI and
+  abstract.
+* A 401 from the faculty list sends the whole screen to the signed-out panel;
+  other failures show inline without hiding the programs.
+* Tests: 10 new (9 in `faculty-list.test.tsx`, 1 scope test in
+  `research-browser.test.tsx`). Existing browser fixtures gain `faculty_count`.

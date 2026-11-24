@@ -20,6 +20,7 @@ import { describeApiError } from "@/lib/errors";
 import { formatDate } from "@/lib/format";
 
 import { LoadingPanel, RetryPanel, SignedOutPanel } from "./account-panels";
+import { FacultyList, facultyScopeKey, type FacultyScope } from "./faculty-list";
 
 type LoadState = "loading" | "ready" | "signed-out" | "failed";
 
@@ -560,6 +561,18 @@ export function ResearchBrowser() {
     : institution
       ? `Programs at ${institution.name}`
       : "Programs in the shared cache";
+  const facultyTitle = department
+    ? `Faculty in ${department.name}`
+    : institution
+      ? `Faculty at ${institution.name}`
+      : "Faculty in the shared cache";
+  const facultyScope: FacultyScope = {
+    institutionId: department ? undefined : institution?.id,
+    departmentId: department?.id,
+    area: filters.area,
+    // A chosen institution already fixes the country.
+    country: institution ? undefined : filters.country,
+  };
 
   return (
     <div className="research-browser">
@@ -688,7 +701,8 @@ export function ResearchBrowser() {
                 <p className="hint">
                   {stated(item.country)} · {item.program_count}{" "}
                   {item.program_count === 1 ? "program" : "programs"} · {item.department_count}{" "}
-                  {item.department_count === 1 ? "department" : "departments"}
+                  {item.department_count === 1 ? "department" : "departments"} ·{" "}
+                  {item.faculty_count} faculty
                 </p>
                 <p className="hint">Last checked {formatDate(item.last_checked_at)}</p>
                 <button
@@ -730,15 +744,15 @@ export function ResearchBrowser() {
                   <div>
                     <h3>{item.name}</h3>
                     <p className="hint">
-                      {item.program_count} {item.program_count === 1 ? "program" : "programs"} ·
-                      last checked {formatDate(item.last_checked_at)}
+                      {item.program_count} {item.program_count === 1 ? "program" : "programs"} ·{" "}
+                      {item.faculty_count} faculty · last checked {formatDate(item.last_checked_at)}
                     </p>
                     {item.stale ? <p className="hint">Stale: orientation only.</p> : null}
                   </div>
                   <button
                     type="button"
                     className="button button-quiet"
-                    aria-label={`Filter programs by ${item.name}`}
+                    aria-label={`Filter programs and faculty by ${item.name}`}
                     aria-pressed={department?.id === item.id}
                     onClick={() => chooseDepartment(item)}
                   >
@@ -789,9 +803,17 @@ export function ResearchBrowser() {
         ) : null}
       </section>
 
+      <FacultyList
+        key={facultyScopeKey(facultyScope)}
+        scope={facultyScope}
+        title={facultyTitle}
+        onSessionLost={() => setState("signed-out")}
+      />
+
       <p className="hint">
         This screen reads the shared research cache only; no source is contacted here. A stale
-        row may help you orient, but it is not verified for outreach or a deadline decision.
+        row may help you orient, but it is not verified for outreach or a deadline decision. A
+        faculty email is shown only when the official profile lists it.
       </p>
     </div>
   );

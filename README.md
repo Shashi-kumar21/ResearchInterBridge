@@ -18,7 +18,8 @@ papers. Phase 5b adds an official-page parser for schema.org `Person` records
 (`faculty_pages.py`, ADR-019) with stated-only emails and checksum-verified ORCID
 iDs. Phase 5c attaches papers from OpenAlex keyed only by that stated ORCID iD
 (`openalex.py`, ADR-020), and 5d-1 adds the `faculty` CLI command (ADR-021).
-5d-2 exposes the faculty cache read-only over the HTTP API. OAuth and sending are
+5d-2 exposes the faculty cache read-only over the HTTP API, and 5d-3 adds
+faculty to the `/research` web screen. OAuth and sending are
 not implemented, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
