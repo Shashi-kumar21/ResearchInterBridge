@@ -216,7 +216,8 @@ optimization) have no predecessor.
 | 5d-1-fix | QA #27 follow-ups: `--source-institution` required, stale verified address documented | merged (PR #28, ADR-021) |
 | 5d-2 | Cache-only faculty API (`/api/research/faculty`, `/{id}`) and `faculty_count` on browse rows | PR #29 (ADR-021) |
 | 5d-2-fix | QA #29 n1/n2: summary list load, `idx_faculty_department` (migration 9) | merged (PR #30) |
-| 5d-3 | Faculty on the `/research` web screen, scoped by institution/department | this PR (ADR-021) |
+| 5d-3 | Faculty on the `/research` web screen, scoped by institution/department | PR #31 (ADR-021) |
+| 5d-3-fix | QA #31 UI nits: in-card detail retry, error cleared on load-more, unverified wording | this PR |
 
 Phase 2c-2 notes for reviewers:
 
@@ -887,3 +888,10 @@ makes the existing `register`/`login` safe to expose.
   other failures show inline without hiding the programs.
 * Tests: 10 new (9 in `faculty-list.test.tsx`, 1 scope test in
   `research-browser.test.tsx`). Existing browser fixtures gain `faculty_count`.
+* QA review (PR #31, APPROVE) UI follow-ups, done in `fix/faculty-web-followups`:
+  n1 a failed details read now shows its message inside the card with a
+  "Try again" button (`Retry details for <name>`), instead of an empty card;
+  n2 a successful "Load more faculty" clears an earlier list error; n3 the
+  unverified-email line now says the address was not confirmed on the
+  person's official profile page (it may sit on the official host but come
+  from a source without contact authority). Tests: 2 new.

@@ -89,8 +89,8 @@ function ContactLine({ member }: { readonly member: ResearchFaculty }) {
   if (member.email_status === "unverified") {
     return (
       <p className="hint faculty-contact">
-        Email not verified: an address was found outside the official profile, so it is not
-        shown.{" "}
+        Email not verified, so it is hidden: the address was not confirmed on this person&apos;s
+        official profile page.{" "}
         {member.email_source_url ? (
           <External href={member.email_source_url}>Where it was found</External>
         ) : null}
@@ -138,10 +138,20 @@ interface FacultyCardProps {
   readonly expanded: boolean;
   readonly detail: ResearchFacultyDetail | undefined;
   readonly loadingDetail: boolean;
+  readonly detailError: string | undefined;
   readonly onToggle: (member: ResearchFaculty) => void;
+  readonly onRetryDetail: (member: ResearchFaculty) => void;
 }
 
-function FacultyCard({ member, expanded, detail, loadingDetail, onToggle }: FacultyCardProps) {
+function FacultyCard({
+  member,
+  expanded,
+  detail,
+  loadingDetail,
+  detailError,
+  onToggle,
+  onRetryDetail,
+}: FacultyCardProps) {
   return (
     <li className="card research-faculty">
       <div className="card-head">
@@ -187,6 +197,20 @@ function FacultyCard({ member, expanded, detail, loadingDetail, onToggle }: Facu
           <p className="hint" aria-live="polite">
             Loading the latest cached copy…
           </p>
+        ) : detailError && !detail ? (
+          <div className="research-detail">
+            <p className="alert" role="alert">
+              {detailError}
+            </p>
+            <button
+              type="button"
+              className="button button-quiet"
+              aria-label={`Retry details for ${member.full_name}`}
+              onClick={() => onRetryDetail(member)}
+            >
+              Try again
+            </button>
+          </div>
         ) : detail ? (
           <div className="research-detail">
             <dl>
@@ -253,6 +277,7 @@ export function FacultyList({ scope, title, onSessionLost }: FacultyListProps) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [details, setDetails] = useState<Readonly<Record<number, ResearchFacultyDetail>>>({});
   const [loadingDetail, setLoadingDetail] = useState<number | null>(null);
+  const [detailErrors, setDetailErrors] = useState<Readonly<Record<number, string>>>({});
   const requestId = useRef(0);
   const sessionLost = useRef(onSessionLost);
 
@@ -306,6 +331,7 @@ export function FacultyList({ scope, title, onSessionLost }: FacultyListProps) {
     const token = requestId.current + 1;
     requestId.current = token;
     setLoading(true);
+    setError(null);
     listResearchFaculty({
       institution_id: institutionId,
       department_id: departmentId,
@@ -318,6 +344,7 @@ export function FacultyList({ scope, title, onSessionLost }: FacultyListProps) {
         if (requestId.current !== token) {
           return;
         }
+        setError(null);
         setFaculty((current) => [...current, ...page.faculty]);
         setTotal(page.total);
       })
@@ -338,12 +365,24 @@ export function FacultyList({ scope, title, onSessionLost }: FacultyListProps) {
     if (details[member.id]) {
       return;
     }
+    loadDetail(member);
+  }
+
+  /** A failed detail read stays inside its card, with its own retry. */
+  function loadDetail(member: ResearchFaculty): void {
     setLoadingDetail(member.id);
+    setDetailErrors(({ [member.id]: _cleared, ...rest }) => rest);
     getResearchFaculty(member.id)
       .then((fresh) => {
         setDetails((current) => ({ ...current, [fresh.id]: fresh }));
       })
-      .catch(fail)
+      .catch((failure: unknown) => {
+        if (isSessionLost(failure)) {
+          sessionLost.current();
+          return;
+        }
+        setDetailErrors((current) => ({ ...current, [member.id]: describeApiError(failure) }));
+      })
       .finally(() => {
         setLoadingDetail((current) => (current === member.id ? null : current));
       });
@@ -380,7 +419,9 @@ export function FacultyList({ scope, title, onSessionLost }: FacultyListProps) {
               expanded={expanded === member.id}
               detail={details[member.id]}
               loadingDetail={loadingDetail === member.id}
+              detailError={detailErrors[member.id]}
               onToggle={toggle}
+              onRetryDetail={loadDetail}
             />
           ))}
         </ul>
