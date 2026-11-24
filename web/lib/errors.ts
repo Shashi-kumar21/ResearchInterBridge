@@ -58,6 +58,15 @@ export function describeApiError(error: unknown): string {
       return "That fact is no longer available. Reload the list and try again.";
     case "deletion_incomplete":
       return "The document was not deleted because its stored file is in use. Close any program using it and try again.";
+    case "shortlist_full":
+      return "Your shortlist is full. Remove some entries before adding more.";
+    case "shortlist_item_missing":
+      return "That entry is no longer on your shortlist. Reload the page.";
+    case "faculty_missing":
+    case "program_missing":
+      return "That record is no longer in the research cache. Reload the page.";
+    case "invalid_matching":
+      return "Matches could not be computed right now. The operator has been notified; try again later.";
     case "invalid_input":
       return error.message;
     case "network_error":
