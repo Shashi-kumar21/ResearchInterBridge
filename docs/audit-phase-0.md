@@ -212,7 +212,8 @@ optimization) have no predecessor.
 | 5b | Official-page `Person` parser, faculty page adapter, ORCID column (migration 8) | merged (PR #24, ADR-019) |
 | 5c | OpenAlex works attached by stated ORCID iD, attribution re-checked per work | merged (PR #25, ADR-020) |
 | 5c-fix | QA follow-ups on #25: truncated author lists, contact check, ADR-020 notes | merged (PR #26, ADR-020) |
-| 5d-1 | `faculty` CLI: offline cache reads, live official pages + ORCID papers, verified-only email output | this PR (ADR-021) |
+| 5d-1 | `faculty` CLI: offline cache reads, live official pages + ORCID papers, verified-only email output | merged (PR #27, ADR-021) |
+| 5d-1-fix | QA #27 follow-ups: `--source-institution` required, stale verified address documented | this PR (ADR-021) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -815,3 +816,8 @@ makes the existing `register`/`login` safe to expose.
   missing-contact error, builder plumbing with and without papers, the real
   builder's adapter types and authority, builder refusals and `public_email`.
   Full suite: 756 passed, 2 skipped.
+* QA review (PR #27, APPROVE) follow-ups, decided by the Owner on 2026-11-24 and
+  done in `fix/faculty-cli-followups`: m1 a verified address on a stale record
+  stays visible with `stale` and `contact_sendable: false` (documented in
+  ADR-021, test added); n1 `--source-url` now requires `--source-institution`
+  (actionable error, tests added).

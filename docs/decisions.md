@@ -720,6 +720,14 @@ trigger a live fetch of faculty pages and OpenAlex.
 
 * A student sees fewer addresses than are stored. That is deliberate (§3.5:
   unverified contacts are excluded from sending).
+* A verified address on a **stale** record (past its 30-day TTL) is still shown,
+  next to `stale: true` and `contact_sendable: false` (Owner, 2026-11-24, QA m1
+  on PR #27). §13.2.4 forbids treating stale data as verified *for outreach*;
+  outreach gates on `contact_sendable`, which is false for stale records, so the
+  address is orientation only until a refresh re-verifies it.
+* `faculty --source-url` requires `--source-institution` (Owner, 2026-11-24, QA
+  n1 on PR #27). A page's `worksFor` is often a lab or department, and using it
+  as the institution would split one university into several browse nodes.
 * Fresh faculty data depends on the operator running the CLI until the scheduled
   refresh worker exists (Phase 10). An API-triggered refresh, if wanted later,
   needs its own ADR with rate limits and a source allow-list.

@@ -139,7 +139,13 @@ def test_live_discovery_names_the_missing_contact_setting(
 ) -> None:
     monkeypatch.delenv("RIB_RESEARCH_CONTACT_EMAIL", raising=False)
 
-    code, out = cli.run("faculty", "--source-url", "https://example.edu/people")
+    code, out = cli.run(
+        "faculty",
+        "--source-url",
+        "https://example.edu/people",
+        "--source-institution",
+        "Example University",
+    )
 
     assert code == 1
     assert out == ""
@@ -228,7 +234,7 @@ def test_the_builder_refuses_without_a_contact_or_a_source(tmp_path: Path) -> No
         cli_module._build_faculty_adapter(
             settings,
             ["https://www.cs.example.edu/people"],
-            institution=None,
+            institution="Example University",
             country=None,
             department=None,
             with_papers=True,
@@ -237,6 +243,59 @@ def test_the_builder_refuses_without_a_contact_or_a_source(tmp_path: Path) -> No
         cli_module._build_faculty_adapter(
             settings, [], institution=None, country=None, department=None, with_papers=True
         )
+
+
+@pytest.mark.parametrize("institution", [None, "", "   "])
+def test_live_faculty_discovery_requires_the_source_institution(
+    tmp_path: Path, institution: str | None
+) -> None:
+    settings = Settings(
+        database_path=tmp_path / "app.db",
+        data_directory=tmp_path / "data",
+        research_contact_email="research@example.org",
+    )
+
+    with pytest.raises(DiscoveryError, match="--source-institution is required"):
+        cli_module._build_faculty_adapter(
+            settings,
+            ["https://www.cs.example.edu/people"],
+            institution=institution,
+            country=None,
+            department=None,
+            with_papers=True,
+        )
+
+
+def test_the_cli_reports_a_missing_source_institution(cli, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RIB_RESEARCH_CONTACT_EMAIL", "research@example.org")
+
+    code, out = cli.run("faculty", "--source-url", "https://www.cs.example.edu/people")
+
+    assert code == 1
+    assert out == ""
+    assert "--source-institution is required" in cli.last_err
+
+
+def test_a_stale_verified_address_is_shown_but_not_sendable(cli) -> None:
+    # Owner decision (ADR-021): the address stays visible with `stale` and
+    # `contact_sendable: false`; outreach gates on contact_sendable only.
+    with db.session(cli.settings.database_path) as connection:
+        db.apply_migrations(connection)
+        fac.search_faculty(
+            connection,
+            fac.FacultyQuery(),
+            adapter=FakeAdapter(records=(person(),)),
+            now=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+    code, out = cli.run("faculty", "--offline")
+
+    assert code == 0
+    (member,) = json.loads(out)["faculty"]
+    assert member["stale"] is True
+    assert member["email"] == "jane.doe@cs.example.edu"
+    assert member["email_status"] == "verified"
+    assert member["contact_sendable"] is False
 
 
 def test_public_email_shows_only_verified_addresses(tmp_path: Path) -> None:
