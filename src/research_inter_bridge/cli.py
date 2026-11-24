@@ -776,7 +776,7 @@ def _faculty_payload(member: faculty_service.FacultyMember) -> dict[str, object]
         "highlighted_publications": [
             _publication_payload(publication) for publication in member.highlighted_publications
         ],
-        "publication_count": len(member.publications),
+        "publication_count": member.publication_count,
         "last_checked_at": member.last_checked_at,
         "stale": member.stale,
     }

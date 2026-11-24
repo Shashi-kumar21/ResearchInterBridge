@@ -214,7 +214,8 @@ optimization) have no predecessor.
 | 5c-fix | QA follow-ups on #25: truncated author lists, contact check, ADR-020 notes | merged (PR #26, ADR-020) |
 | 5d-1 | `faculty` CLI: offline cache reads, live official pages + ORCID papers, verified-only email output | merged (PR #27, ADR-021) |
 | 5d-1-fix | QA #27 follow-ups: `--source-institution` required, stale verified address documented | merged (PR #28, ADR-021) |
-| 5d-2 | Cache-only faculty API (`/api/research/faculty`, `/{id}`) and `faculty_count` on browse rows | this PR (ADR-021) |
+| 5d-2 | Cache-only faculty API (`/api/research/faculty`, `/{id}`) and `faculty_count` on browse rows | PR #29 (ADR-021) |
+| 5d-2-fix | QA #29 n1/n2: summary list load, `idx_faculty_department` (migration 9) | this PR |
 
 Phase 2c-2 notes for reviewers:
 
@@ -845,3 +846,19 @@ makes the existing `register`/`login` safe to expose.
 * Both routes require a session and send `Cache-Control: no-store`, like the
   other research routes.
 * Tests: 10 new (`tests/test_api_faculty.py`).
+* QA review (PR #29, APPROVE) follow-ups, done in `fix/faculty-api-followups`
+  (plan agreed with QA; n3 deferred):
+  * n1: `browse_faculty(include_publications=False)` reads only the sort
+    columns (id, year, title) of a member's papers, then loads the full rows
+    (authors, abstract) for the three highlights only. `FacultyMember` gains
+    `publication_count`, which is always exact; in summary mode
+    `publications` is empty. The list route uses summary mode; the detail
+    route still returns every paper. The paper order lives in one helper,
+    `faculty._order_key`.
+  * n2: migration 9 `faculty_department_index` adds `idx_faculty_department`
+    on `faculty_members (department_id)` for the department `faculty_count`.
+  * n3 (pre-existing): `browse_faculty` still filters in Python; deferred to
+    the performance phase.
+  * Tests: 4 new in `tests/test_faculty.py` (summary vs full highlights and
+    count, only highlighted papers are read, zero-paper count, query plan uses
+    the new index).

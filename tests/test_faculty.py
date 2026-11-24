@@ -862,6 +862,72 @@ def test_get_faculty_and_a_missing_id(connection: sqlite3.Connection) -> None:
     assert excinfo.value.code == "faculty_missing"
 
 
+def _many_papers() -> tuple[fac.DiscoveredPublication, ...]:
+    return (
+        paper(doi="10.1234/a", title="Alpha", year=2019),
+        paper(doi="10.1234/b", title="Beta", year=2025),
+        paper(doi="10.1234/c", title="Gamma", year=None),
+        paper(doi="10.1234/d", title="Delta", year=2025),
+        paper(doi="10.1234/e", title="Epsilon", year=2021, abstract="Long abstract."),
+    )
+
+
+def test_a_summary_browse_loads_only_the_highlights_but_counts_every_paper(
+    connection: sqlite3.Connection,
+) -> None:
+    # QA n1 on PR #29: a list page must not load every paper just to count it.
+    fill(connection, person(publications=_many_papers()))
+
+    (full,) = fac.browse_faculty(connection, now=NOW).faculty
+    (summary,) = fac.browse_faculty(connection, now=NOW, include_publications=False).faculty
+
+    assert [p.title for p in full.publications] == ["Beta", "Delta", "Epsilon", "Alpha", "Gamma"]
+    assert full.publication_count == 5
+    assert summary.publications == ()
+    assert summary.publication_count == 5
+    assert summary.highlighted_publications == full.highlighted_publications
+    assert [p.title for p in summary.highlighted_publications] == ["Beta", "Delta", "Epsilon"]
+
+
+def test_a_summary_browse_never_reads_unhighlighted_papers(
+    connection: sqlite3.Connection,
+) -> None:
+    fill(connection, person(publications=_many_papers()))
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
+    try:
+        fac.browse_faculty(connection, now=NOW, include_publications=False)
+    finally:
+        connection.set_trace_callback(None)
+
+    (heavy,) = [sql for sql in statements if "SELECT * FROM publications" in sql]
+    loaded = connection.execute(
+        "SELECT title FROM publications WHERE id IN ("
+        + heavy.split("WHERE id IN (", 1)[1].split(")", 1)[0]
+        + ") ORDER BY title"
+    ).fetchall()
+    assert [row["title"] for row in loaded] == ["Beta", "Delta", "Epsilon"]
+
+
+def test_a_member_without_papers_has_a_zero_count(connection: sqlite3.Connection) -> None:
+    fill(connection, person(publications=()))
+
+    (member,) = fac.browse_faculty(connection, now=NOW, include_publications=False).faculty
+
+    assert member.publication_count == 0
+    assert member.highlighted_publications == ()
+
+
+def test_the_department_faculty_count_uses_its_own_index(connection: sqlite3.Connection) -> None:
+    # QA n2 on PR #29: idx_faculty_institution leads with institution_id.
+    plan = connection.execute(
+        "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM faculty_members WHERE department_id = ?",
+        (1,),
+    ).fetchall()
+
+    assert any("idx_faculty_department" in str(row["detail"]) for row in plan)
+
+
 @dataclass
 class _ProgramAdapter:
     name: str = "fixture"

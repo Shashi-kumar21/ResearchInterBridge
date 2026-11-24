@@ -200,8 +200,12 @@ class FacultyMember:
     #: this flag, never the presence of ``email`` alone (§3.5).
     contact_sendable: bool
     recruitment_evidence_url: str | None
+    #: Every attributed paper, newest first. Empty when the member was loaded
+    #: as a browse summary (``include_publications=False``); use
+    #: ``publication_count`` for the number, which is always exact.
     publications: tuple[Publication, ...]
     highlighted_publications: tuple[Publication, ...]
+    publication_count: int
     confidence: float | None
     last_checked_at: str | None
     stale: bool
@@ -782,11 +786,16 @@ def browse_faculty(
     limit: int = discovery.DEFAULT_BROWSE_LIMIT,
     offset: int = 0,
     now: datetime | None = None,
+    include_publications: bool = True,
 ) -> FacultyPage:
     """One page of cached faculty, sorted by name. Never calls an adapter.
 
     Filtering by ``institution_id`` and then ``department_id`` is the
     university → department → faculty hierarchy; it works offline.
+
+    With ``include_publications=False`` each member carries only its
+    highlighted papers and ``publication_count``, so a list page does not load
+    every paper, author list and abstract just to count them.
     """
 
     checked_at = now or datetime.now(UTC)
@@ -804,7 +813,12 @@ def browse_faculty(
         )
     ]
     return FacultyPage(
-        faculty=_load_faculty(connection, matched[offset : offset + limit], now=checked_at),
+        faculty=_load_faculty(
+            connection,
+            matched[offset : offset + limit],
+            now=checked_at,
+            include_publications=include_publications,
+        ),
         total=len(matched),
         limit=limit,
         offset=offset,
@@ -1196,7 +1210,11 @@ def _offline_faculty_ids(connection: sqlite3.Connection, query: FacultyQuery) ->
 
 
 def _load_faculty(
-    connection: sqlite3.Connection, ids: Sequence[int], *, now: datetime
+    connection: sqlite3.Connection,
+    ids: Sequence[int],
+    *,
+    now: datetime,
+    include_publications: bool = True,
 ) -> tuple[FacultyMember, ...]:
     if not ids:
         return ()
@@ -1231,18 +1249,31 @@ def _load_faculty(
             batch,
         ):
             contacts[int(row["faculty_id"])] = row
+        # Only the sort columns are read here; the heavy columns (abstract,
+        # authors) are loaded later for the papers actually returned.
         for row in connection.execute(
-            f"SELECT faculty_id, publication_id FROM faculty_publications "  # noqa: S608
-            f"WHERE faculty_id IN ({placeholders})",
+            f"SELECT fp.faculty_id, p.id, p.year, p.title "  # noqa: S608
+            f"FROM faculty_publications AS fp "
+            f"JOIN publications AS p ON p.id = fp.publication_id "
+            f"WHERE fp.faculty_id IN ({placeholders})",
             batch,
         ):
-            links.setdefault(int(row["faculty_id"]), []).append(int(row["publication_id"]))
+            links.setdefault(int(row["faculty_id"]), []).append(
+                _order_key(row["year"], str(row["title"]), int(row["id"]))
+            )
         entries.update(
             cache.entries_for_entities(connection, entity_type="faculty", entity_ids=batch)
         )
+    ordered: dict[int, list[int]] = {
+        faculty_id: [key[-1] for key in sorted(keys)] for faculty_id, keys in links.items()
+    }
+    wanted = {
+        faculty_id: ids_ if include_publications else ids_[:HIGHLIGHTED_PUBLICATIONS]
+        for faculty_id, ids_ in ordered.items()
+    }
     publications = _load_publications(
         connection,
-        tuple(publication_id for linked in links.values() for publication_id in linked),
+        tuple(publication_id for linked in wanted.values() for publication_id in linked),
         now=now,
     )
     rows.sort(key=lambda row: (str(row["full_name"]), int(row["id"])))
@@ -1255,10 +1286,7 @@ def _load_faculty(
         contact = contacts.get(faculty_id)
         email_status = "unavailable" if contact is None else str(contact["status"])
         papers = tuple(
-            sorted(
-                (publications[pid] for pid in links.get(faculty_id, ()) if pid in publications),
-                key=_publication_order,
-            )
+            publications[pid] for pid in wanted.get(faculty_id, ()) if pid in publications
         )
         members.append(
             FacultyMember(
@@ -1281,8 +1309,9 @@ def _load_faculty(
                 orcid=discovery._row_text(row["orcid"]),
                 contact_sendable=email_status == "verified" and not is_stale,
                 recruitment_evidence_url=discovery._row_text(row["recruitment_evidence_url"]),
-                publications=papers,
+                publications=papers if include_publications else (),
                 highlighted_publications=papers[:HIGHLIGHTED_PUBLICATIONS],
+                publication_count=len(ordered.get(faculty_id, ())),
                 confidence=None if row["confidence"] is None else float(row["confidence"]),
                 last_checked_at=discovery._row_text(row["last_checked_at"]),
                 stale=is_stale,
@@ -1343,11 +1372,15 @@ def _load_publications(
     return loaded
 
 
-def _publication_order(publication: Publication) -> tuple[int, int, str, int]:
-    """Newest first; an undated paper sorts after every dated one."""
+def _order_key(year: Any, title: str, publication_id: int) -> tuple[int, int, str, int]:
+    """The one paper order: newest first, an undated paper after every dated one.
 
-    undated = 1 if publication.year is None else 0
-    return (undated, -(publication.year or 0), publication.title.casefold(), publication.id)
+    It reads bare columns, so the order is decided before a paper is loaded.
+    """
+
+    year_value = None if year is None else int(year)
+    undated = 1 if year_value is None else 0
+    return (undated, -(year_value or 0), title.casefold(), publication_id)
 
 
 # --------------------------------------------------------------------------- #
