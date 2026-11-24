@@ -206,7 +206,8 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     faculty_parser.add_argument(
-        "--source-institution", help="Institution that owns the source pages."
+        "--source-institution",
+        help="Institution that owns the source pages (required with --source-url).",
     )
     faculty_parser.add_argument("--source-country", help="Country of the source pages.")
     faculty_parser.add_argument("--source-department", help="Department of the source pages.")
@@ -682,6 +683,13 @@ def _build_faculty_adapter(
 
     if not source_urls:
         raise DiscoveryError("at least one --source-url is required for live faculty discovery.")
+    if not (institution or "").strip():
+        # A page's own `worksFor` is often a lab or department; letting it name the
+        # institution would split one university into several browse nodes (ADR-021).
+        raise DiscoveryError(
+            "--source-institution is required with --source-url; name the university "
+            'that owns these pages, for example --source-institution "Example University".'
+        )
     client = _research_client(settings)
     sources = tuple(
         FacultyPageSource(

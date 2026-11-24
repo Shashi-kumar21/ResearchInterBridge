@@ -149,7 +149,7 @@ the faculty cache; `--area`, `--country`, `--institution` and `--department`
 filter it. `--source-url` reads official faculty or directory pages live
 (schema.org `Person` JSON-LD only) and, unless `--no-papers` is passed, looks up
 papers on OpenAlex for people whose page states an ORCID iD. The `--source-*`
-options name the institution, country and department of those pages. Only a
+options name the institution (required), country and department of those pages. Only a
 **verified** email is printed; an unverified one shows `email: null` with its
 `email_status` and `email_source_url`, and `contact_sendable` is the only flag
 outreach may trust. Live faculty fetches are CLI-only; the API stays cache-only.
