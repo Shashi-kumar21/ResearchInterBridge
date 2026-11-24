@@ -213,7 +213,8 @@ optimization) have no predecessor.
 | 5c | OpenAlex works attached by stated ORCID iD, attribution re-checked per work | merged (PR #25, ADR-020) |
 | 5c-fix | QA follow-ups on #25: truncated author lists, contact check, ADR-020 notes | merged (PR #26, ADR-020) |
 | 5d-1 | `faculty` CLI: offline cache reads, live official pages + ORCID papers, verified-only email output | merged (PR #27, ADR-021) |
-| 5d-1-fix | QA #27 follow-ups: `--source-institution` required, stale verified address documented | this PR (ADR-021) |
+| 5d-1-fix | QA #27 follow-ups: `--source-institution` required, stale verified address documented | merged (PR #28, ADR-021) |
+| 5d-2 | Cache-only faculty API (`/api/research/faculty`, `/{id}`) and `faculty_count` on browse rows | this PR (ADR-021) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -821,3 +822,26 @@ makes the existing `register`/`login` safe to expose.
   stays visible with `stale` and `contact_sendable: false` (documented in
   ADR-021, test added); n1 `--source-url` now requires `--source-institution`
   (actionable error, tests added).
+
+## 28. Phase 5d-2 notes (faculty API)
+
+* `GET /api/research/faculty` browses the faculty cache through
+  `faculty.browse_faculty` with `area`, `country`, `institution_id`,
+  `department_id`, `limit` and `offset` (same bounds as program browsing). It
+  never calls an adapter: live faculty fetches stay CLI-only (ADR-021).
+* `GET /api/research/faculty/{id}` returns one member with every attributed
+  paper, newest first, including abstracts; an unknown id is
+  `404 faculty_missing` (added to `DISCOVERY_STATUS_CODES`).
+* List rows carry up to three highlighted papers (no abstract) plus
+  `publication_count`, so a page of 100 rows stays small.
+* `email` is serialised only through `faculty.public_email` (verified only).
+  An unverified address is `email: null` with `email_status` and
+  `email_source_url`; tests assert the stored value never appears in the
+  response body. A stale verified record keeps its address with
+  `stale: true` and `contact_sendable: false`.
+* `faculty_count` joins `program_count`/`department_count` on institution rows
+  and `program_count` on department rows (`discovery._institution_rows`,
+  `_department_rows`). No migration: `faculty_members` exists since migration 7.
+* Both routes require a session and send `Cache-Control: no-store`, like the
+  other research routes.
+* Tests: 10 new (`tests/test_api_faculty.py`).

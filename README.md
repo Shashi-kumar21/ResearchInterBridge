@@ -18,7 +18,7 @@ papers. Phase 5b adds an official-page parser for schema.org `Person` records
 (`faculty_pages.py`, ADR-019) with stated-only emails and checksum-verified ORCID
 iDs. Phase 5c attaches papers from OpenAlex keyed only by that stated ORCID iD
 (`openalex.py`, ADR-020), and 5d-1 adds the `faculty` CLI command (ADR-021).
-The HTTP API does not expose faculty yet. OAuth and sending are
+5d-2 exposes the faculty cache read-only over the HTTP API. OAuth and sending are
 not implemented, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
@@ -198,8 +198,10 @@ if the database cannot be opened.
 | `POST` | `/api/facts/apply` | cookie | copy confirmed facts into blank profile fields |
 | `GET` | `/api/research/programs` | cookie | browse cached programs (`area`, `country`, `department`, `degree_level`, `institution_id`, `department_id`, `limit`, `offset`) |
 | `GET` | `/api/research/programs/{id}` | cookie | one cached program; `404 program_missing` |
-| `GET` | `/api/research/institutions` | cookie | cached institutions with program/department counts (`country`, paging) |
-| `GET` | `/api/research/institutions/{id}/departments` | cookie | cached departments of one institution; `404 institution_missing` |
+| `GET` | `/api/research/institutions` | cookie | cached institutions with program/department/faculty counts (`country`, paging) |
+| `GET` | `/api/research/institutions/{id}/departments` | cookie | cached departments of one institution, with program/faculty counts; `404 institution_missing` |
+| `GET` | `/api/research/faculty` | cookie | browse cached faculty (`area`, `country`, `institution_id`, `department_id`, `limit`, `offset`); `email` only when verified, gate outreach on `contact_sendable` |
+| `GET` | `/api/research/faculty/{id}` | cookie | one cached faculty member with every attributed paper (with abstracts); `404 faculty_missing` |
 
 Every failure has the same shape, `{"error": {"code", "message"}}`, with stable
 codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
@@ -207,7 +209,7 @@ codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
 (422), `rate_limited` (429), `deletion_incomplete` (409), `profile_missing`
 (404), `fact_missing` (404), `invalid_profile` (400), `document_missing` (404),
 `document_too_large` (413), `unsupported_document` (415),
-`document_unreadable` (422), `program_missing` (404), `institution_missing`
+`document_unreadable` (422), `program_missing` (404), `faculty_missing` (404), `institution_missing`
 (404) and `discovery_unavailable` (503). A rejected request body never echoes
 its values, so a bad password is not reflected back or written to the caller's
 logs.

@@ -303,6 +303,7 @@ class InstitutionOut(BaseModel):
     website_url: str | None
     program_count: int
     department_count: int
+    faculty_count: int
     last_checked_at: str | None
     stale: bool
 
@@ -320,6 +321,7 @@ class DepartmentOut(BaseModel):
     name: str
     website_url: str | None
     program_count: int
+    faculty_count: int
     last_checked_at: str | None
     stale: bool
 
@@ -327,6 +329,72 @@ class DepartmentOut(BaseModel):
 class DepartmentListOut(BaseModel):
     institution: InstitutionOut
     departments: list[DepartmentOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class PublicationOut(BaseModel):
+    """A paper attributed to a faculty member by a stated identifier (ADR-020)."""
+
+    id: int
+    title: str
+    year: int | None
+    doi: str | None
+    url: str
+    venue: str | None
+    authors: list[str]
+    recent: bool
+    last_checked_at: str | None
+    stale: bool
+
+
+class PublicationDetailOut(PublicationOut):
+    abstract: str | None
+
+
+class FacultyOut(BaseModel):
+    """A cached faculty profile for the browse screen.
+
+    ``email`` is set only for a verified address (ADR-021); an unverified one is
+    represented by ``email_status`` and ``email_source_url`` alone. Outreach
+    must gate on ``contact_sendable``, never on the presence of ``email``: a
+    stale record keeps its verified address visible but is not sendable.
+    """
+
+    id: int
+    full_name: str
+    title: str | None
+    institution: str
+    institution_id: int
+    department: str | None
+    department_id: int | None
+    country: str | None
+    lab_name: str | None
+    profile_url: str
+    evidence_urls: list[str]
+    research_interests: list[str]
+    email: str | None
+    email_status: Literal["verified", "unverified", "unavailable"]
+    email_source_url: str | None
+    contact_sendable: bool
+    orcid: str | None
+    recruitment_evidence_url: str | None
+    highlighted_publications: list[PublicationOut]
+    publication_count: int
+    confidence: float | None
+    last_checked_at: str | None
+    stale: bool
+
+
+class FacultyDetailOut(FacultyOut):
+    """One faculty member with every attributed paper, newest first."""
+
+    publications: list[PublicationDetailOut]
+
+
+class FacultyListOut(BaseModel):
+    faculty: list[FacultyOut]
     total: int
     limit: int
     offset: int
