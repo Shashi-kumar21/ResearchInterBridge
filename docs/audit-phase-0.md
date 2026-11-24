@@ -220,8 +220,10 @@ optimization) have no predecessor.
 | 5d-3-fix | QA #31 UI nits: in-card detail retry, error cleared on load-more, unverified wording | merged (PR #33) |
 | 5-chore | Next.js 16.4.6 and dev-dependency advisories (`npm audit` 0) | merged (PR #32) |
 | 6a | Explainable matching service: keyword factors, eligibility gates, ranking | merged (PR #34, ADR-022) |
-| 6b | Per-user shortlist with score snapshots (migration 10), export, refresh | PR #35 (ADR-022) |
-| 6c | Matching and shortlist API (`/api/match/*`, `/api/shortlist*`) | this PR (ADR-022) |
+| 6b | Per-user shortlist with score snapshots (migration 10), export, refresh | merged (PR #35, ADR-022) |
+| 6c | Matching and shortlist API (`/api/match/*`, `/api/shortlist*`) | merged (PR #36, ADR-022) |
+| 6-fix | QA post-merge #34/#35 follow-ups, `SCORING_VERSION` 2, `MatchingError` handler (QA #36 n2) | merged (PR #37, ADR-022) |
+| 6c-fix | Per-account rate limit on the scoring routes (QA #36 n1) | this PR |
 
 Phase 2c-2 notes for reviewers:
 
@@ -961,6 +963,37 @@ makes the existing `register`/`login` safe to expose.
   extra key, 51 items), `shortlist_full`, cross-student isolation, paging and
   truncation.
 
+## 33. QA post-merge follow-ups (#34, #35, #36)
+
+* QA post-merge reviews (#34 REQUEST_CHANGES, #35 APPROVE with follow-ups),
+  fixed in `fix/matching-qa-followups`:
+  * B1: `score_faculty` refuses a browse-summary member (`publications` empty
+    but `publication_count` > 0) with `MatchingError` instead of falling back to
+    highlights. `shortlist` and `recommendations` already load full members.
+  * n1: already fixed in #35 (date left out of the fingerprint; `current` also
+    compares score and eligibility).
+  * n2: `_NO_FUNDING` also catches "not provided/available/offered/included",
+    "self-funded" and "no salary/payment/allowance".
+  * n3: a shorter source phrase inside the student's term earns half credit,
+    and only when it has a significant word.
+  * f1: the migration-10 comment now says snapshots can quote the student's
+    own terms and dates; the account export includes every snapshot with its
+    factors, gates and gaps.
+  * f2: documented on `shortlist.list_items` (one load per row; cache if a
+    screen polls it).
+  * f3 (process): noted. When QA is unreachable, Dev pings the Owner and does
+    not ask for a merge.
+  * QA blocker on #37: `SCORING_VERSION` bumped to `"2"` because n2 and n3
+    change scoring rules; a test shows a version bump makes an existing
+    snapshot non-current and refresh stores a new one.
+  * Tests: 4 new or extended in `tests/test_matching.py`; 1 new and 1
+    extended in `tests/test_shortlist.py`.
+* QA review of #36 (APPROVE): n2 `MatchingError` now has an API handler that
+  returns 500 with the stable code `invalid_matching` and a safe message, and
+  logs the detail. It is 500, not 400, because neither cause (bad weights, a
+  summary-loaded member) comes from the request. n1 (a per-user rate limit on
+  `/api/match/*`) follows in its own PR.
+
 * QA #36 n1, fixed in `fix/match-rate-limit`: `ratelimit.MATCH_RULE`
   (`match.score`, 60 per 300 s) is keyed by account (`user:<id>`, hashed like
   every subject), not by address, so a shared campus NAT does not pool
@@ -969,4 +1002,3 @@ makes the existing `register`/`login` safe to expose.
   `POST /api/shortlist/refresh`; reading the stored shortlist is not limited.
   Test: a shared budget across the scoring routes, the 429 with `Retry-After`,
   the unlimited listing, and a second account unaffected.
-

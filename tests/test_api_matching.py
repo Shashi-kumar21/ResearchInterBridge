@@ -391,3 +391,23 @@ def test_scoring_routes_share_a_per_account_rate_limit(
     with TestClient(create_app(settings)) as other:
         sign_in(other, email="ben@example.edu")
         assert other.get("/api/match/faculty").status_code == 200
+
+
+def test_a_matching_error_has_a_stable_code_and_no_internals(
+    client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from research_inter_bridge.matching import MatchingError
+
+    seed(settings)
+    sign_in(client)
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise MatchingError("faculty 7 was loaded as a browse summary; internal detail")
+
+    monkeypatch.setattr(recommendations, "faculty_matches", broken)
+
+    response = client.get("/api/match/faculty")
+
+    assert response.status_code == 500
+    assert error_code(response) == "invalid_matching"
+    assert "internal detail" not in response.text

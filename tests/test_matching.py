@@ -215,6 +215,7 @@ def test_missing_values_are_unknown_gaps_not_failures() -> None:
             research_interests=(),
             publications=(),
             highlighted_publications=(),
+            publication_count=0,
             recruitment_evidence_url=None,
             country=None,
         ),
@@ -230,6 +231,50 @@ def test_missing_values_are_unknown_gaps_not_failures() -> None:
     assert "Your profile lists no target countries." in result.gaps
     assert "No recruitment evidence is stated." in result.gaps
     assert len(result.gaps) == len(set(result.gaps))
+
+
+def test_a_browse_summary_member_is_refused_not_scored_differently() -> None:
+    # QA B1 on #34: a summary load has only highlights, which would give the
+    # same person a different score under the same fingerprint.
+    full = member()
+    summary = member(publications=(), highlighted_publications=full.publications[:2])
+
+    with pytest.raises(m.MatchingError, match="browse summary"):
+        m.score_faculty(profile(), summary, today=TODAY)
+    assert m.score_faculty(profile(), full, today=TODAY).score > 0
+
+
+def test_a_member_with_no_papers_at_all_is_scored() -> None:
+    result = m.score_faculty(
+        profile(),
+        member(publications=(), highlighted_publications=(), publication_count=0),
+        today=TODAY,
+    )
+
+    assert factor(result, "publications").status == "unknown"
+
+
+def test_a_shorter_source_phrase_inside_the_students_earns_half() -> None:
+    # QA n3 on #34: "learning" alone must not fully match "machine learning".
+    reverse = m.score_faculty(
+        profile(research_keywords=("machine learning",)),
+        member(research_interests=("learning",)),
+        today=TODAY,
+    )
+    forward = m.score_faculty(
+        profile(research_keywords=("learning",)),
+        member(research_interests=("machine learning",)),
+        today=TODAY,
+    )
+    stopword = m.score_faculty(
+        profile(research_keywords=("research methods",)),
+        member(research_interests=("research",)),
+        today=TODAY,
+    )
+
+    assert factor(reverse, "research_interest").credit == 0.5
+    assert factor(forward, "research_interest").credit == 1.0
+    assert factor(stopword, "research_interest").status == "unmet"
 
 
 def test_a_stale_faculty_record_is_a_gap() -> None:
@@ -312,6 +357,9 @@ def test_timeline_and_funding_cover_known_unknown_and_unmet() -> None:
         profile(internship_start=None, internship_end=None), program(), today=TODAY
     )
     unpaid = m.score_program(profile(), program(stipend="Unpaid"), today=TODAY)
+    for text in ("Stipend not provided", "Funding not available", "Self-funded", "No salary"):
+        negative = m.score_program(profile(), program(stipend=text), today=TODAY)
+        assert factor(negative, "funding").status == "unmet", text
     no_stipend = m.score_program(profile(), program(stipend=None), today=TODAY)
     self_funded = m.score_program(
         profile(funding_required=False), program(stipend=None), today=TODAY

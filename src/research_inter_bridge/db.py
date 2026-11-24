@@ -471,8 +471,10 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
             "CREATE INDEX IF NOT EXISTS idx_shortlist_user ON shortlist_items (user_id, status)",
             # A snapshot of the explained score at the moment it was shortlisted
-            # or refreshed (ADR-022). Only stored inputs are fingerprinted; the
-            # result JSON holds factors, gates and gaps, never profile text.
+            # or refreshed (ADR-022). The result JSON holds factors, gates and
+            # gaps; factor `matched` terms and reasons can quote the student's own
+            # keywords, skills and internship dates, so the table is per-user,
+            # cascade-deleted and included in the account export.
             """
             CREATE TABLE IF NOT EXISTS match_scores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

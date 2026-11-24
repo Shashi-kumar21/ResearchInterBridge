@@ -222,7 +222,8 @@ codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
 (404), `fact_missing` (404), `invalid_profile` (400), `document_missing` (404),
 `document_too_large` (413), `unsupported_document` (415),
 `document_unreadable` (422), `program_missing` (404), `faculty_missing` (404),
-`invalid_shortlist` (400), `shortlist_full` (409), `shortlist_item_missing` (404), `institution_missing`
+`invalid_shortlist` (400), `shortlist_full` (409), `shortlist_item_missing` (404),
+`invalid_matching` (500, logged), `institution_missing`
 (404) and `discovery_unavailable` (503). A rejected request body never echoes
 its values, so a bad password is not reflected back or written to the caller's
 logs.

@@ -29,6 +29,7 @@ from ..errors import (
     ShortlistError,
 )
 from ..logging import get_logger
+from ..matching import MatchingError
 from .middleware import OriginGuardMiddleware
 from .routes import (
     AUTH_STATUS_CODES,
@@ -186,6 +187,18 @@ def _install_error_handlers(app: FastAPI) -> None:
         # Messages name the field or the missing id, never a provider payload.
         status_code = DISCOVERY_STATUS_CODES.get(exc.code, status.HTTP_400_BAD_REQUEST)
         return error_response(status_code, exc.code, str(exc))
+
+    @app.exception_handler(MatchingError)
+    async def _matching_error(request: Request, exc: MatchingError) -> JSONResponse:
+        # Never caused by the request: bad weights are server configuration and a
+        # summary-loaded member is a programming error. Log it for the operator
+        # and return a stable code instead of a generic 500 (QA n2 on #36).
+        logger.error("matching failed on %s: %s", request.url.path, exc)
+        return error_response(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            exc.code,
+            "matching could not be computed; the operator has been notified.",
+        )
 
     @app.exception_handler(ShortlistError)
     async def _shortlist_error(request: Request, exc: ShortlistError) -> JSONResponse:
