@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, File, Form, Path, Query, Request, Response, UploadFile, status
@@ -389,6 +390,12 @@ def _snapshot_out(snapshot: shortlist_service.Snapshot) -> SnapshotOut:
         gaps=list(stored.get("gaps", [])),  # type: ignore[call-overload]
         created_at=snapshot.created_at,
     )
+
+
+def _check_match_budget(connection: sqlite3.Connection, user_id: int) -> None:
+    """Count one scoring request against the account's ``match.score`` budget."""
+
+    ratelimit.check(connection, rule=ratelimit.MATCH_RULE, client=ratelimit.user_subject(user_id))
 
 
 def _targets(payload: ShortlistChangeRequest) -> list[shortlist_service.Target]:
@@ -1119,9 +1126,11 @@ def match_faculty(
     """Cached faculty ranked for the signed-in student, every point explained.
 
     Cache-only; nothing is stored. A missing profile is ``404 profile_missing``.
+    Shares the per-account ``match.score`` budget (``429 rate_limited``).
     """
 
     response.headers["Cache-Control"] = "no-store"
+    _check_match_budget(connection, account.user_id)
     page = recommendations.faculty_matches(
         connection,
         account.user_id,
@@ -1171,6 +1180,7 @@ def match_programs(
     """Cached programs ranked for the signed-in student; ineligible ones last."""
 
     response.headers["Cache-Control"] = "no-store"
+    _check_match_budget(connection, account.user_id)
     page = recommendations.program_matches(
         connection,
         account.user_id,
@@ -1243,6 +1253,7 @@ def add_to_shortlist(
     or a missing profile adds nothing.
     """
 
+    _check_match_budget(connection, account.user_id)
     return _change_out(shortlist_service.add(connection, account.user_id, _targets(payload)))
 
 
@@ -1259,6 +1270,7 @@ def exclude_from_matches(
 def refresh_shortlist(account: CurrentAccount, connection: Connection) -> ShortlistChangeOut:
     """Re-score shortlisted targets; a snapshot is stored only where it changed."""
 
+    _check_match_budget(connection, account.user_id)
     return _change_out(shortlist_service.refresh(connection, account.user_id))
 
 
