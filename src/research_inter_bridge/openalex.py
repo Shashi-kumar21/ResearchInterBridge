@@ -245,12 +245,9 @@ def _authors(value: Any, *, truncated: bool) -> tuple[str, ...]:
     the limit is treated the same way, because ``select`` may omit the flag.
     """
 
-    if (
-        truncated
-        or not isinstance(value, list)
-        or len(value) >= LIST_AUTHORSHIP_LIMIT
-        or len(value) > fac.MAX_AUTHORS
-    ):
+    # LIST_AUTHORSHIP_LIMIT (100) is below faculty.MAX_AUTHORS (500), so this
+    # check also keeps every copied list within the validator's cap.
+    if truncated or not isinstance(value, list) or len(value) >= LIST_AUTHORSHIP_LIMIT:
         return ()
     names: list[str] = []
     for authorship in value:
