@@ -21,8 +21,9 @@ iDs. Phase 5c attaches papers from OpenAlex keyed only by that stated ORCID iD
 5d-2 exposes the faculty cache read-only over the HTTP API, and 5d-3 adds
 faculty to the `/research` web screen.
 Phase 6a adds an explainable matching service (`matching.py`, ADR-022) and 6b
-a per-user shortlist with score snapshots (`shortlist.py`); neither is wired to
-the API or web yet. OAuth and sending are
+a per-user shortlist with score snapshots (`shortlist.py`); 6c exposes ranked
+matches and the shortlist over the HTTP API (`recommendations.py`). The web
+screens come next. OAuth and sending are
 not implemented, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
@@ -206,6 +207,13 @@ if the database cannot be opened.
 | `GET` | `/api/research/institutions/{id}/departments` | cookie | cached departments of one institution, with program/faculty counts; `404 institution_missing` |
 | `GET` | `/api/research/faculty` | cookie | browse cached faculty (`area`, `country`, `institution_id`, `department_id`, `limit`, `offset`); `email` only when verified, gate outreach on `contact_sendable` |
 | `GET` | `/api/research/faculty/{id}` | cookie | one cached faculty member with every attributed paper (with abstracts); `404 faculty_missing` |
+| `GET` | `/api/match/faculty` | cookie | cached faculty ranked for the student, every factor explained (faculty filters, `include_excluded`, paging, `truncated`); `404 profile_missing` |
+| `GET` | `/api/match/programs` | cookie | cached programs ranked for the student; gates shown, ineligible ones last (program filters, `include_excluded`, paging) |
+| `GET` | `/api/shortlist` | cookie | the student's shortlist with stored snapshots and a `current` flag (`status=shortlisted|excluded`) |
+| `POST` | `/api/shortlist` | cookie | shortlist up to 50 targets `{items:[{type,id}]}`, all or nothing; stores an explained snapshot |
+| `POST` | `/api/shortlist/exclude` | cookie | hide targets from this student's matches |
+| `POST` | `/api/shortlist/refresh` | cookie | re-score shortlisted targets; a snapshot is stored only where it changed |
+| `DELETE` | `/api/shortlist/{type}/{id}` | cookie | forget one row; `404 shortlist_item_missing` |
 
 Every failure has the same shape, `{"error": {"code", "message"}}`, with stable
 codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
@@ -213,7 +221,8 @@ codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
 (422), `rate_limited` (429), `deletion_incomplete` (409), `profile_missing`
 (404), `fact_missing` (404), `invalid_profile` (400), `document_missing` (404),
 `document_too_large` (413), `unsupported_document` (415),
-`document_unreadable` (422), `program_missing` (404), `faculty_missing` (404), `institution_missing`
+`document_unreadable` (422), `program_missing` (404), `faculty_missing` (404),
+`invalid_shortlist` (400), `shortlist_full` (409), `shortlist_item_missing` (404), `institution_missing`
 (404) and `discovery_unavailable` (503). A rejected request body never echoes
 its values, so a bad password is not reflected back or written to the caller's
 logs.
@@ -344,6 +353,7 @@ src/research_inter_bridge/    Python package
   openalex.py                 ORCID-keyed OpenAlex works for faculty records
   matching.py                 explainable 0-100 matching, eligibility gates, ranking
   shortlist.py                per-user shortlist, exclusions, score snapshots
+  recommendations.py          ranked, explained matches over the cache for one student
   http_source.py              polite contact-bearing HTTP GET boundary (ADR-017)
   program_pages.py            explicit schema.org JSON-LD program parser
   api/                        FastAPI app: sessions, CORS, consent and account routes
