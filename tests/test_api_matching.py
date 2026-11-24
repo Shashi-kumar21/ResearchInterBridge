@@ -369,24 +369,26 @@ def test_scoring_routes_share_a_per_account_rate_limit(
     monkeypatch.setattr(
         ratelimit,
         "MATCH_RULE",
-        ratelimit.RateLimitRule(name="match.score", limit=4, window_seconds=300),
+        ratelimit.RateLimitRule(name="match.score", limit=3, window_seconds=300),
     )
 
+    listings = [client.get("/api/shortlist") for _ in range(5)]
     allowed = [
         client.get("/api/match/faculty"),
         client.get("/api/match/programs"),
         client.post("/api/shortlist/refresh"),
-        client.get("/api/shortlist"),
     ]
     refused = client.get("/api/match/faculty")
     listing = client.get("/api/shortlist")
 
-    assert [response.status_code for response in allowed] == [200, 200, 200, 200]
+    assert [response.status_code for response in allowed] == [200, 200, 200]
     assert refused.status_code == 429
     assert error_code(refused) == "rate_limited"
     assert refused.headers["retry-after"].isdigit()
-    # Listing re-scores every stored row, so it shares the budget too.
-    assert listing.status_code == 429
+    # Listing re-scores nothing (QA n5 on #39), so it never spends the budget:
+    # five reads before and one after the limit all succeed.
+    assert {response.status_code for response in listings} == {200}
+    assert listing.status_code == 200
 
     # The budget is per account: another student on the same address is unaffected.
     with TestClient(create_app(settings)) as other:
@@ -412,3 +414,65 @@ def test_a_matching_error_has_a_stable_code_and_no_internals(
     assert response.status_code == 500
     assert error_code(response) == "invalid_matching"
     assert "internal detail" not in response.text
+
+
+def test_paging_reuses_the_ranked_list_instead_of_rescoring(
+    client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Owner priority (low latency, low cost): "Load more" slices a cached list.
+    from research_inter_bridge import matching
+
+    recommendations.clear_cache()
+    seed(settings)
+    sign_in(client)
+    real = matching.score_faculty
+    scored: list[int] = []
+
+    def counting(*args: object, **kwargs: object):
+        scored.append(1)
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(matching, "score_faculty", counting)
+
+    first = client.get("/api/match/faculty", params={"limit": 1})
+    after_first = len(scored)
+    second = client.get("/api/match/faculty", params={"limit": 1, "offset": 1})
+
+    assert after_first == 3
+    assert len(scored) == after_first
+    assert first.json()["items"][0]["faculty"]["id"] != second.json()["items"][0]["faculty"]["id"]
+
+    # A profile change is a different key, so the list is scored again.
+    client.put(
+        "/api/profile",
+        json={
+            "full_name": "Asha Rao",
+            "contact_email": "asha@example.edu",
+            "degree_type": "msc",
+            "research_keywords": ["compilers"],
+            "target_countries": ["Germany"],
+        },
+    )
+    reranked = client.get("/api/match/faculty").json()["items"]
+    assert len(scored) == after_first + 3
+    assert reranked[0]["faculty"]["full_name"] == "Ravi Kumar"
+
+
+def test_a_shortlist_change_is_visible_on_the_next_match_read(
+    client: TestClient, settings: Settings
+) -> None:
+    recommendations.clear_cache()
+    seed(settings)
+    sign_in(client)
+    first = client.get("/api/match/faculty").json()["items"]
+    jane = next(item for item in first if item["faculty"]["full_name"] == "Jane Doe")
+
+    client.post(
+        "/api/shortlist", json={"items": [{"type": "faculty", "id": jane["faculty"]["id"]}]}
+    )
+    again = client.get("/api/match/faculty").json()["items"]
+
+    assert (
+        next(i for i in again if i["faculty"]["id"] == jane["faculty"]["id"])["shortlist_status"]
+        == "shortlisted"
+    )

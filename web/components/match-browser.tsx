@@ -324,8 +324,11 @@ export function MatchBrowser() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [shortlist, setShortlist] = useState<readonly ShortlistEntry[]>([]);
   const [excluded, setExcluded] = useState<readonly ShortlistEntry[]>([]);
-  /** The target the last notice can undo (an exclusion), if any. */
-  const [undoTarget, setUndoTarget] = useState<ShortlistTarget | null>(null);
+  /** The exclusion the last notice can undo, with the name to show (QA n6 on #39). */
+  const [undoTarget, setUndoTarget] = useState<{
+    readonly target: ShortlistTarget;
+    readonly name: string;
+  } | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const requestId = useRef(0);
 
@@ -468,7 +471,7 @@ export function MatchBrowser() {
     options: {
       readonly patch?: (current: readonly MatchRow[]) => readonly MatchRow[];
       readonly rerank?: boolean;
-      readonly undo?: ShortlistTarget;
+      readonly undo?: { readonly target: ShortlistTarget; readonly name: string };
     } = {},
   ): void {
     const token = requestId.current + 1;
@@ -650,7 +653,7 @@ export function MatchBrowser() {
               type="button"
               className="button button-quiet"
               disabled={busy}
-              onClick={() => restore(undoTarget, "The entry")}
+              onClick={() => restore(undoTarget.target, undoTarget.name)}
             >
               Undo
             </button>
@@ -712,7 +715,7 @@ export function MatchBrowser() {
                     {
                       patch: (current) =>
                         current.filter((row) => keyOf(row.target) !== keyOf(item.target)),
-                      undo: item.target,
+                      undo: { target: item.target, name: item.name },
                     },
                   )
                 }
