@@ -295,7 +295,12 @@ def test_the_export_includes_the_shortlist(connection: sqlite3.Connection) -> No
     (item,) = exported["shortlist"]
     assert item["target_type"] == "faculty"
     assert item["status"] == "shortlisted"
-    assert isinstance(item["score"], int)
+    (snapshot,) = item["snapshots"]
+    assert isinstance(snapshot["score"], int)
+    # QA f1 on #35: the stored factors quote the student's own terms, so the
+    # export must carry them too.
+    research = next(f for f in snapshot["result"]["factors"] if f["key"] == "research_interest")
+    assert "machine learning" in research["matched"]
 
 
 def test_audit_rows_carry_ids_and_counts_but_no_profile_text(

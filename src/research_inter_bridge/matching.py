@@ -76,7 +76,11 @@ _STOPWORDS = frozenset(
     }
 )
 _NON_WORD = re.compile(r"[^\w+#]+", re.UNICODE)
-_NO_FUNDING = re.compile(r"\b(unpaid|no stipend|not funded|unfunded|no funding|none)\b", re.I)
+_NO_FUNDING = re.compile(
+    r"\b(unpaid|unfunded|self[- ]funded|none|no (stipend|funding|salary|payment|allowance)"
+    r"|not (funded|paid|provided|available|offered|included))\b",
+    re.I,
+)
 
 #: Student degree -> the levels a source may state for them (discovery tokens).
 _STUDENT_LEVELS: Mapping[DegreeType, frozenset[str]] = {
@@ -190,15 +194,23 @@ def score_faculty(
     today: date,
     weights: MatchWeights = DEFAULT_WEIGHTS,
 ) -> MatchResult:
-    """Score one cached faculty member for one student. Never stores anything."""
+    """Score one cached faculty member for one student. Never stores anything.
 
+    ``member`` must be a full load (:func:`faculty.get_faculty`, or
+    :func:`faculty.browse_faculty` with ``include_publications=True``). A browse
+    summary carries only highlighted papers, which would score the same person
+    differently under the same fingerprint, so it is refused (QA B1 on #34).
+    """
+
+    if not member.publications and member.publication_count > 0:
+        raise MatchingError(
+            f"faculty {member.id} was loaded as a browse summary; score it from a full "
+            "load (faculty.get_faculty or browse_faculty(include_publications=True))."
+        )
     student_keywords = _phrases(profile.research_keywords)
     student_skills = _phrases((*profile.skills, *profile.coursework))
     interests = _phrases(member.research_interests)
-    titles = tuple(_phrases(publication.title for publication in member.publications))
-    paper_titles = titles or tuple(
-        _phrases(publication.title for publication in member.highlighted_publications)
-    )
+    paper_titles = tuple(_phrases(publication.title for publication in member.publications))
     gaps: list[str] = []
 
     factors = (
@@ -374,13 +386,22 @@ def _contains_phrase(haystack: Sequence[str], needle: Sequence[str]) -> bool:
 
 
 def _phrase_credit(student: str, targets: Sequence[str]) -> tuple[float, str | None]:
-    """1.0 for a whole-phrase match, 0.5 for a shared significant word, else 0."""
+    """Credit for one student term against the source phrases.
+
+    1.0 when the student's whole phrase appears in a source phrase; 0.5 when a
+    shorter source phrase sits inside the student's phrase (an interest of just
+    "learning" must not fully match "machine learning", QA n3 on #34) or when
+    they share a significant word; else 0.
+    """
 
     needle = student.split()
     for target in targets:
-        hay = target.split()
-        if _contains_phrase(hay, needle) or _contains_phrase(needle, hay):
+        if _contains_phrase(target.split(), needle):
             return 1.0, target
+    for target in targets:
+        hay = target.split()
+        if _contains_phrase(needle, hay) and _significant(hay):
+            return 0.5, target
     wanted = _significant(needle)
     if wanted:
         for target in targets:

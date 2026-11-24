@@ -761,9 +761,14 @@ from soft ranking, and names unknowns.
 
 * Keyword matching works on normalised phrases (case-folded, punctuation split,
   trailing plural `s` folded). A student term that appears as a whole phrase in
-  the source (or contains it) earns full credit; one sharing only a significant
-  word (3+ letters, not a stopword) earns half. A factor reaches full credit at
+  the source earns full credit. A shorter source phrase inside the student's
+  term (only if it has a significant word), or a shared significant word (3+
+  letters, not a stopword), earns half. A factor reaches full credit at
   three matched terms, so listing many keywords is not penalised.
+* A faculty member is scored only from a full load (all attributed papers). A
+  browse summary, which carries highlights only, is refused with
+  `MatchingError`, so one person can never get two scores under one
+  fingerprint (QA B1 on #34).
 * Factors that do not apply to a target type (timeline and funding for a
   person, publications for a program) are `not_applicable` and leave the
   denominator, so 100 stays reachable. An `unknown` factor earns 0 and stays in
