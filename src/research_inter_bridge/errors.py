@@ -190,6 +190,21 @@ class InstitutionNotFoundError(DiscoveryError):
     code = "institution_missing"
 
 
+class ShortlistError(ResearchInterBridgeError):
+    """Invalid shortlist request (unknown target type, too many items, ...)."""
+
+    def __init__(self, message: str, *, code: str = "invalid_shortlist") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class ShortlistItemNotFoundError(ShortlistError):
+    """The caller has no shortlist row for that target."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="shortlist_item_missing")
+
+
 class FacultyNotFoundError(DiscoveryError):
     """A faculty id that is not in the shared cache."""
 

@@ -450,6 +450,49 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX IF NOT EXISTS idx_faculty_department ON faculty_members (department_id)",
         ),
     ),
+    Migration(
+        version=10,
+        name="shortlist_and_match_scores",
+        statements=(
+            # Per-user, never shared (task.md §13.4): one row per student and
+            # cached target. UNIQUE is the deduplication rule; an excluded
+            # target is remembered so browse screens can hide it.
+            """
+            CREATE TABLE IF NOT EXISTS shortlist_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                target_type TEXT NOT NULL CHECK (target_type IN ('faculty', 'program')),
+                target_id INTEGER NOT NULL CHECK (target_id > 0),
+                status TEXT NOT NULL CHECK (status IN ('shortlisted', 'excluded')),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (user_id, target_type, target_id)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_shortlist_user ON shortlist_items (user_id, status)",
+            # A snapshot of the explained score at the moment it was shortlisted
+            # or refreshed (ADR-022). Only stored inputs are fingerprinted; the
+            # result JSON holds factors, gates and gaps, never profile text.
+            """
+            CREATE TABLE IF NOT EXISTS match_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                shortlist_item_id INTEGER NOT NULL
+                    REFERENCES shortlist_items (id) ON DELETE CASCADE,
+                score INTEGER NOT NULL CHECK (score BETWEEN 0 AND 100),
+                eligibility TEXT NOT NULL
+                    CHECK (eligibility IN ('eligible', 'ineligible', 'unknown', 'not_assessed')),
+                scoring_version TEXT NOT NULL,
+                inputs_fingerprint TEXT NOT NULL,
+                evaluated_on TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_match_scores_item "
+            "ON match_scores (shortlist_item_id, id)",
+        ),
+    ),
 )
 
 

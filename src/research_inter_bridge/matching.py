@@ -170,8 +170,10 @@ class MatchResult:
     #: source values, stale records.
     gaps: tuple[str, ...]
     scoring_version: str
-    #: Hash of every input the score depends on; a snapshot is current only
-    #: while this still matches.
+    #: Hash of the stored inputs (profile fields read, target id and last-check
+    #: time, weights, scoring version). The evaluation date is not part of it:
+    #: a snapshot is current while this matches *and* re-scoring today gives
+    #: the same score and eligibility (a closing date can pass overnight).
     inputs_fingerprint: str
     evaluated_on: str = field(default="")
 
@@ -669,7 +671,6 @@ def _result(
                 "version": SCORING_VERSION,
                 "type": target_type,
                 "weights": weights.as_dict(),
-                "today": today.isoformat(),
                 **fingerprint_parts,
             },
             sort_keys=True,
