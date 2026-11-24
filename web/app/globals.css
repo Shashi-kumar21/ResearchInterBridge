@@ -710,6 +710,20 @@ main > section {
   margin: 0;
 }
 
+.faculty-papers {
+  margin: 0.25rem 0;
+  padding-left: 1.1rem;
+}
+
+.faculty-papers li + li {
+  margin-top: 0.35rem;
+}
+
+.faculty-email {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
 .research-institution,
 .research-department {
   display: flex;

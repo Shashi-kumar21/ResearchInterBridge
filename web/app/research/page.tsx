@@ -6,7 +6,7 @@ import { SiteHeader } from "@/components/site-header";
 export const metadata: Metadata = {
   title: "Research discovery",
   description:
-    "Browse cached universities, departments and research programs with their source link, last-checked date and a stale flag. No record is invented.",
+    "Browse cached universities, departments, research programs and faculty with their source link, last-checked date and a stale flag. No record is invented.",
 };
 
 export default function ResearchPage() {
@@ -17,9 +17,9 @@ export default function ResearchPage() {
         <p className="eyebrow">Research discovery</p>
         <h1>Browse the shared research cache</h1>
         <p className="page-lead">
-          Start with an institution, then narrow to a department and a program. Every row keeps
-          the source it came from and the date it was last checked; an unstated field stays
-          unstated. Browsing reads the cache only, so it still works when a source is unavailable.
+          Start with an institution, then narrow to a department, its programs and its faculty.
+          Every row keeps the source it came from and the date it was last checked; an unstated
+          field stays unstated. Browsing reads the cache only, so it still works when a source is unavailable.
         </p>
         <noscript>
           <p className="alert">

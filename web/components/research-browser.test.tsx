@@ -16,6 +16,7 @@ const TUM = {
   website_url: "https://www.tum.de",
   program_count: 2,
   department_count: 1,
+  faculty_count: 0,
   last_checked_at: "2026-11-05T12:00:00Z",
   stale: false,
 };
@@ -27,6 +28,7 @@ const DELFT = {
   website_url: null,
   program_count: 1,
   department_count: 1,
+  faculty_count: 0,
   last_checked_at: "2026-11-04T09:30:00Z",
   stale: false,
 };
@@ -37,6 +39,7 @@ const PHYSICS = {
   name: "Physics",
   website_url: null,
   program_count: 2,
+  faculty_count: 0,
   last_checked_at: "2026-11-05T12:00:00Z",
   stale: false,
 };
@@ -110,6 +113,9 @@ function defaultRouter(
 ) {
   return (input: RequestInfo | URL): Promise<Response> => {
     const url = String(input);
+    if (url.includes("/api/research/faculty")) {
+      return Promise.resolve(json({ faculty: [], total: 0, limit: 10, offset: 0 }));
+    }
     if (/\/api\/research\/institutions\/\d+\/departments/.test(url)) {
       return Promise.resolve(
         overrides.departments?.() ?? departmentPage(TUM, [PHYSICS]),
@@ -211,7 +217,7 @@ describe("ResearchBrowser", () => {
     await screen.findByRole("heading", { name: "MSc Research Internship" });
     await user.click(screen.getByRole("button", { name: "Browse Technical University of Munich" }));
     await screen.findByRole("heading", { name: "Physics" });
-    await user.click(screen.getByRole("button", { name: "Filter programs by Physics" }));
+    await user.click(screen.getByRole("button", { name: "Filter programs and faculty by Physics" }));
 
     await waitFor(() =>
       expect(requestedUrls()).toContainEqual(expect.stringContaining("department_id=5")),
@@ -219,6 +225,29 @@ describe("ResearchBrowser", () => {
     expect(
       screen.getByRole("heading", { name: "Programs in Physics" }),
     ).toBeVisible();
+  });
+
+  it("scopes the faculty list to the chosen institution, then department", async () => {
+    fetchMock.mockImplementation(defaultRouter());
+    const user = userEvent.setup();
+    render(<ResearchBrowser />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Faculty in the shared cache" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Browse Technical University of Munich" }));
+    expect(
+      await screen.findByRole("heading", { name: "Faculty at Technical University of Munich" }),
+    ).toBeVisible();
+    await screen.findByRole("heading", { name: "Physics" });
+    await user.click(screen.getByRole("button", { name: "Filter programs and faculty by Physics" }));
+
+    expect(await screen.findByRole("heading", { name: "Faculty in Physics" })).toBeVisible();
+    const facultyCalls = requestedUrls().filter((url) => url.includes("/api/research/faculty"));
+    expect(facultyCalls).toContainEqual(expect.stringContaining("institution_id=1"));
+    const last = facultyCalls[facultyCalls.length - 1];
+    expect(last).toContain("department_id=5");
+    expect(last).not.toContain("institution_id=");
   });
 
   it("sends country, degree and area filters and resets the drill-down", async () => {
@@ -295,6 +324,9 @@ describe("ResearchBrowser", () => {
             ? institutionPage([DELFT], 2)
             : institutionPage([TUM], 2),
         );
+      }
+      if (url.includes("/api/research/faculty")) {
+        return Promise.resolve(json({ faculty: [], total: 0, limit: 10, offset: 0 }));
       }
       return Promise.resolve(programPage([PROGRAM]));
     });

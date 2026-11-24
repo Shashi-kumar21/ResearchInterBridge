@@ -458,6 +458,7 @@ export interface ResearchInstitution {
   readonly website_url: string | null;
   readonly program_count: number;
   readonly department_count: number;
+  readonly faculty_count: number;
   readonly last_checked_at: string | null;
   readonly stale: boolean;
 }
@@ -475,6 +476,7 @@ export interface ResearchDepartment {
   readonly name: string;
   readonly website_url: string | null;
   readonly program_count: number;
+  readonly faculty_count: number;
   readonly last_checked_at: string | null;
   readonly stale: boolean;
 }
@@ -558,4 +560,94 @@ export function listInstitutionDepartments(
   return request<ResearchDepartmentPage>(
     `/api/research/institutions/${institutionId}/departments${query}`,
   );
+}
+
+/** A paper attributed to a faculty member by a stated ORCID iD (ADR-020). */
+export interface ResearchPublication {
+  readonly id: number;
+  readonly title: string;
+  readonly year: number | null;
+  readonly doi: string | null;
+  readonly url: string;
+  readonly venue: string | null;
+  readonly authors: readonly string[];
+  readonly recent: boolean;
+  readonly last_checked_at: string | null;
+  readonly stale: boolean;
+}
+
+export interface ResearchPublicationDetail extends ResearchPublication {
+  readonly abstract: string | null;
+}
+
+export type EmailStatus = "verified" | "unverified" | "unavailable";
+
+/**
+ * A cached faculty profile. `email` is set only for a verified address
+ * (ADR-021); an unverified one arrives as `email: null` plus its status and
+ * source page. Only `contact_sendable` may ever gate outreach: a stale record
+ * keeps its verified address visible but is not sendable.
+ */
+export interface ResearchFaculty {
+  readonly id: number;
+  readonly full_name: string;
+  readonly title: string | null;
+  readonly institution: string;
+  readonly institution_id: number;
+  readonly department: string | null;
+  readonly department_id: number | null;
+  readonly country: string | null;
+  readonly lab_name: string | null;
+  readonly profile_url: string;
+  readonly evidence_urls: readonly string[];
+  readonly research_interests: readonly string[];
+  readonly email: string | null;
+  readonly email_status: EmailStatus;
+  readonly email_source_url: string | null;
+  readonly contact_sendable: boolean;
+  readonly orcid: string | null;
+  readonly recruitment_evidence_url: string | null;
+  readonly highlighted_publications: readonly ResearchPublication[];
+  readonly publication_count: number;
+  readonly confidence: number | null;
+  readonly last_checked_at: string | null;
+  readonly stale: boolean;
+}
+
+export interface ResearchFacultyDetail extends ResearchFaculty {
+  readonly publications: readonly ResearchPublicationDetail[];
+}
+
+export interface ResearchFacultyPage {
+  readonly faculty: readonly ResearchFaculty[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+export interface ResearchFacultyFilters {
+  readonly area?: string;
+  readonly country?: string;
+  readonly institution_id?: number;
+  readonly department_id?: number;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export function listResearchFaculty(
+  filters: ResearchFacultyFilters = {},
+): Promise<ResearchFacultyPage> {
+  const query = researchQuery({
+    area: filters.area,
+    country: filters.country,
+    institution_id: filters.institution_id,
+    department_id: filters.department_id,
+    limit: filters.limit,
+    offset: filters.offset,
+  });
+  return request<ResearchFacultyPage>(`/api/research/faculty${query}`);
+}
+
+export function getResearchFaculty(facultyId: number): Promise<ResearchFacultyDetail> {
+  return request<ResearchFacultyDetail>(`/api/research/faculty/${facultyId}`);
 }
