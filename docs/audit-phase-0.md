@@ -987,3 +987,9 @@ makes the existing `register`/`login` safe to expose.
     snapshot non-current and refresh stores a new one.
   * Tests: 4 new or extended in `tests/test_matching.py`; 1 new and 1
     extended in `tests/test_shortlist.py`.
+* QA review of #36 (APPROVE): n2 `MatchingError` now has an API handler that
+  returns 500 with the stable code `invalid_matching` and a safe message, and
+  logs the detail. It is 500, not 400, because neither cause (bad weights, a
+  summary-loaded member) comes from the request. n1 (a per-user rate limit on
+  `/api/match/*`) follows in its own PR.
+

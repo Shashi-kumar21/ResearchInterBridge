@@ -357,3 +357,23 @@ def test_matches_page_and_report_truncation(
 
     assert (first["total"], first["truncated"]) == (2, True)
     assert first["items"][0]["faculty"]["id"] != second["items"][0]["faculty"]["id"]
+
+
+def test_a_matching_error_has_a_stable_code_and_no_internals(
+    client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from research_inter_bridge.matching import MatchingError
+
+    seed(settings)
+    sign_in(client)
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise MatchingError("faculty 7 was loaded as a browse summary; internal detail")
+
+    monkeypatch.setattr(recommendations, "faculty_matches", broken)
+
+    response = client.get("/api/match/faculty")
+
+    assert response.status_code == 500
+    assert error_code(response) == "invalid_matching"
+    assert "internal detail" not in response.text
