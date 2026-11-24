@@ -274,6 +274,18 @@ def list_items(
     return tuple(sorted(entries, key=_entry_order))
 
 
+def statuses(connection: sqlite3.Connection, user_id: int, target_type: str) -> dict[int, str]:
+    """Target id -> ``shortlisted``/``excluded`` for one student and target type."""
+
+    return {
+        int(row["target_id"]): str(row["status"])
+        for row in connection.execute(
+            "SELECT target_id, status FROM shortlist_items WHERE user_id = ? AND target_type = ?",
+            (user_id, target_type),
+        )
+    }
+
+
 def excluded_targets(connection: sqlite3.Connection, user_id: int) -> frozenset[Target]:
     """Targets a browse screen should hide for this student."""
 

@@ -221,6 +221,8 @@ optimization) have no predecessor.
 | 5-chore | Next.js 16.4.6 and dev-dependency advisories (`npm audit` 0) | merged (PR #32) |
 | 6a | Explainable matching service: keyword factors, eligibility gates, ranking | merged (PR #34, ADR-022) |
 | 6b | Per-user shortlist with score snapshots (migration 10), export, refresh | merged (PR #35, ADR-022) |
+| 6c | Matching and shortlist API (`/api/match/*`, `/api/shortlist*`) | merged (PR #36, ADR-022) |
+| 6-fix | QA post-merge #34/#35 follow-ups, `SCORING_VERSION` 2, `MatchingError` handler (QA #36 n2) | this PR (ADR-022) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -934,7 +936,33 @@ makes the existing `register`/`login` safe to expose.
   `ShortlistItemNotFoundError` (`shortlist_item_missing`).
 * Tests: 14 new (`tests/test_shortlist.py`); the export API test expects the
   new key.
-| 6-fix | QA post-merge #34/#35: summary-load guard, funding negatives, reverse-phrase credit, export snapshots | `fix/matching-qa-followups` |
+
+## 32. Phase 6c notes (matching and shortlist API)
+
+* New `recommendations.py`: `faculty_matches` and `program_matches` collect
+  candidates through the cache-only browse functions (at most
+  `MAX_CANDIDATES = 300`, `truncated` says when more matched), score them live
+  with `matching`, drop the student's excluded targets unless
+  `include_excluded`, rank with `matching.rank_key` and page the result.
+  Nothing is stored.
+* Routes: `GET /api/match/faculty`, `GET /api/match/programs`,
+  `GET /api/shortlist`, `POST /api/shortlist`, `POST /api/shortlist/exclude`,
+  `POST /api/shortlist/refresh`, `DELETE /api/shortlist/{type}/{id}`. All need
+  a session; the match routes need a profile (`404 profile_missing`) and send
+  `Cache-Control: no-store`. The inputs fingerprint is not exposed.
+* `ShortlistError` is mapped (`invalid_shortlist` 400, `shortlist_full` 409,
+  `shortlist_item_missing` 404). Unknown targets surface as `faculty_missing`
+  or `program_missing` and add nothing.
+* `matching.rank_key` is now public so wrappers sort by the same rule;
+  `shortlist.statuses` gives target id -> status per type.
+* Tests: 21 new (`tests/test_api_matching.py`): session and profile required,
+  ranked and explained faculty, ineligible program last with its failed gate,
+  add/dedupe/list/refresh/remove, exclusion hides and `include_excluded` shows,
+  all-or-nothing on an unknown id, body validation (empty, bad type, bad id,
+  extra key, 51 items), `shortlist_full`, cross-student isolation, paging and
+  truncation.
+
+## 33. QA post-merge follow-ups (#34, #35, #36)
 
 * QA post-merge reviews (#34 REQUEST_CHANGES, #35 APPROVE with follow-ups),
   fixed in `fix/matching-qa-followups`:
