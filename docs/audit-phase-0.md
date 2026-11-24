@@ -960,3 +960,13 @@ makes the existing `register`/`login` safe to expose.
   all-or-nothing on an unknown id, body validation (empty, bad type, bad id,
   extra key, 51 items), `shortlist_full`, cross-student isolation, paging and
   truncation.
+
+* QA #36 n1, fixed in `fix/match-rate-limit`: `ratelimit.MATCH_RULE`
+  (`match.score`, 60 per 300 s) is keyed by account (`user:<id>`, hashed like
+  every subject), not by address, so a shared campus NAT does not pool
+  students' budgets. It is checked by `GET /api/match/faculty`,
+  `GET /api/match/programs`, `POST /api/shortlist` and
+  `POST /api/shortlist/refresh`; reading the stored shortlist is not limited.
+  Test: a shared budget across the scoring routes, the 429 with `Retry-After`,
+  the unlimited listing, and a second account unaffected.
+

@@ -357,3 +357,37 @@ def test_matches_page_and_report_truncation(
 
     assert (first["total"], first["truncated"]) == (2, True)
     assert first["items"][0]["faculty"]["id"] != second["items"][0]["faculty"]["id"]
+
+
+def test_scoring_routes_share_a_per_account_rate_limit(
+    settings: Settings, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from research_inter_bridge import ratelimit
+
+    seed(settings)
+    sign_in(client)
+    monkeypatch.setattr(
+        ratelimit,
+        "MATCH_RULE",
+        ratelimit.RateLimitRule(name="match.score", limit=3, window_seconds=300),
+    )
+
+    allowed = [
+        client.get("/api/match/faculty"),
+        client.get("/api/match/programs"),
+        client.post("/api/shortlist/refresh"),
+    ]
+    refused = client.get("/api/match/faculty")
+    listing = client.get("/api/shortlist")
+
+    assert [response.status_code for response in allowed] == [200, 200, 200]
+    assert refused.status_code == 429
+    assert error_code(refused) == "rate_limited"
+    assert refused.headers["retry-after"].isdigit()
+    # Reading the stored shortlist does not score anything, so it is not limited.
+    assert listing.status_code == 200
+
+    # The budget is per account: another student on the same address is unaffected.
+    with TestClient(create_app(settings)) as other:
+        sign_in(other, email="ben@example.edu")
+        assert other.get("/api/match/faculty").status_code == 200
