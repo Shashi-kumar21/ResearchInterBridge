@@ -773,9 +773,18 @@ from soft ranking, and names unknowns.
   window (stated `closed`, or a stated closing date in the past). Faculty have
   no gates yet (`not_assessed`).
 * `rank` sorts every `ineligible` result after all others, whatever its score.
-* `inputs_fingerprint` hashes the scoring version, weights, date, the profile
-  fields a score reads and the target's id and last-checked time. Name, email,
-  phone and GPA are not inputs.
+* `inputs_fingerprint` hashes the scoring version, weights, the profile fields
+  a score reads and the target's id and last-checked time. Name, email, phone
+  and GPA are not inputs. The evaluation date is deliberately left out (6b): a
+  stored snapshot is *current* while the fingerprint matches **and** re-scoring
+  today gives the same score and eligibility, so a closing date that passes
+  overnight still makes a snapshot out of date without every snapshot expiring
+  daily.
+* Phase 6b storage: `shortlist_items` (one row per student and target, status
+  `shortlisted` or `excluded`, UNIQUE for deduplication) and `match_scores`
+  (append-only snapshots: score, eligibility, version, fingerprint, date and
+  the factors/gates/gaps as JSON). Both carry `user_id` and cascade on account
+  deletion; neither is ever read for another student (§13.4).
 
 **Consequences:**
 

@@ -219,7 +219,8 @@ optimization) have no predecessor.
 | 5d-3 | Faculty on the `/research` web screen, scoped by institution/department | PR #31 (ADR-021) |
 | 5d-3-fix | QA #31 UI nits: in-card detail retry, error cleared on load-more, unverified wording | merged (PR #33) |
 | 5-chore | Next.js 16.4.6 and dev-dependency advisories (`npm audit` 0) | merged (PR #32) |
-| 6a | Explainable matching service: keyword factors, eligibility gates, ranking | this PR (ADR-022) |
+| 6a | Explainable matching service: keyword factors, eligibility gates, ranking | merged (PR #34, ADR-022) |
+| 6b | Per-user shortlist with score snapshots (migration 10), export, refresh | this PR (ADR-022) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -910,3 +911,26 @@ makes the existing `register`/`login` safe to expose.
 * Not wired to the CLI, API or web yet; 6b adds the per-user shortlist with
   snapshots, then the API and screens.
 * Tests: 24 new (`tests/test_matching.py`).
+* #34 was merged by the Owner without a QA verdict: the QA session had exited
+  and agent-bridge had no `qa` agent. A post-merge QA review is still owed.
+
+## 31. Phase 6b notes (shortlist and snapshots)
+
+* Migration 10 `shortlist_and_match_scores` adds `shortlist_items` and
+  `match_scores` (per-user, cascade on account deletion).
+* New `shortlist.py`: `add` (multi-select, up to 50 per call, atomic: every
+  target and the profile are checked before any write), `exclude`, `remove`,
+  `refresh` (stores a snapshot only where inputs or result changed),
+  `list_items` (best first, ineligible after the rest, excluded last, with a
+  `current` flag), `excluded_targets` and `export_payload`. Limits: 500 rows
+  per student (`shortlist_full`).
+* The account export gains a `shortlist` list (ids, status, score,
+  eligibility, date; no factors).
+* `matching.inputs_fingerprint` no longer includes the evaluation date; see
+  ADR-022.
+* Audit actions `shortlist.add`, `shortlist.exclude`, `shortlist.remove` and
+  `shortlist.refresh` record changed target ids and an unchanged count only.
+* New errors: `ShortlistError` (`invalid_shortlist`, `shortlist_full`) and
+  `ShortlistItemNotFoundError` (`shortlist_item_missing`).
+* Tests: 14 new (`tests/test_shortlist.py`); the export API test expects the
+  new key.
