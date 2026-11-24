@@ -67,7 +67,7 @@ LOGIN_RULE = RateLimitRule(name="auth.login", limit=120, window_seconds=900)
 
 
 #: Matching scores up to ``recommendations.MAX_CANDIDATES`` records per call,
-#: and shortlist add/refresh re-score targets. Keyed by account, not address
+#: and shortlist add/refresh/list re-score targets. Keyed by account, not address
 #: (``user_subject``), so a shared campus NAT does not pool students' budgets.
 #: 60 scoring requests per 5 minutes is far above paging by hand (QA n1 on #36).
 MATCH_RULE = RateLimitRule(name="match.score", limit=60, window_seconds=300)

@@ -369,23 +369,24 @@ def test_scoring_routes_share_a_per_account_rate_limit(
     monkeypatch.setattr(
         ratelimit,
         "MATCH_RULE",
-        ratelimit.RateLimitRule(name="match.score", limit=3, window_seconds=300),
+        ratelimit.RateLimitRule(name="match.score", limit=4, window_seconds=300),
     )
 
     allowed = [
         client.get("/api/match/faculty"),
         client.get("/api/match/programs"),
         client.post("/api/shortlist/refresh"),
+        client.get("/api/shortlist"),
     ]
     refused = client.get("/api/match/faculty")
     listing = client.get("/api/shortlist")
 
-    assert [response.status_code for response in allowed] == [200, 200, 200]
+    assert [response.status_code for response in allowed] == [200, 200, 200, 200]
     assert refused.status_code == 429
     assert error_code(refused) == "rate_limited"
     assert refused.headers["retry-after"].isdigit()
-    # Reading the stored shortlist does not score anything, so it is not limited.
-    assert listing.status_code == 200
+    # Listing re-scores every stored row, so it shares the budget too.
+    assert listing.status_code == 429
 
     # The budget is per account: another student on the same address is unaffected.
     with TestClient(create_app(settings)) as other:

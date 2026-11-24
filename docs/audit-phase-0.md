@@ -224,7 +224,7 @@ optimization) have no predecessor.
 | 6c | Matching and shortlist API (`/api/match/*`, `/api/shortlist*`) | merged (PR #36, ADR-022) |
 | 6-fix | QA post-merge #34/#35 follow-ups, `SCORING_VERSION` 2, `MatchingError` handler (QA #36 n2) | merged (PR #37, ADR-022) |
 | 6c-fix | Per-account rate limit on the scoring routes (QA #36 n1) | merged (PR #38) |
-| 6d | `/matches` web screen: ranked tabs, explanations, multi-select shortlist, exclude, saved scores | this PR (ADR-022) |
+| 6d | `/matches` web screen: ranked tabs, explanations, multi-select shortlist, exclude, saved scores | merged (PR #39, ADR-022) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -1043,4 +1043,9 @@ makes the existing `register`/`login` safe to expose.
   * Tests: 4 new (restore from Excluded, undo, loaded pages kept with no
     re-scoring call, selection cap); the exclude test is scoped to the ranked
     list.
+* QA note on #38, fixed in `fix/shortlist-list-rate-limit`: `GET /api/shortlist`
+  re-scores every stored row to compute `current` (up to 500 full loads), so it
+  now spends the same `match.score` budget. The earlier note that "reading the
+  stored shortlist is not limited" no longer holds; the test now expects the
+  listing to be refused once the budget is spent.
 
