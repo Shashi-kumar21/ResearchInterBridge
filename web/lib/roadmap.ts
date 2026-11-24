@@ -116,9 +116,12 @@ export const CAPABILITIES: readonly Capability[] = [
     id: "matching",
     title: "Explainable matching",
     detail:
-      "A score you can inspect, plus hard eligibility gates: if funding, degree " +
-      "level or start date do not fit, the group is excluded rather than ranked.",
-    status: "planned",
+      "A 0-100 score you can inspect factor by factor, with hard eligibility " +
+      "gates kept apart: a program whose stated degree level or closing date " +
+      "rules you out is ranked last, never hidden behind a high score. Unknowns " +
+      "are listed as gaps. Shortlist several at once; each keeps the score it " +
+      "had when you saved it.",
+    status: "available",
     surface: "web",
   },
   {

@@ -710,6 +710,44 @@ main > section {
   margin: 0;
 }
 
+.match-select {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.match-gates {
+  list-style: none;
+  margin: 0.25rem 0;
+  padding: 0;
+}
+
+.match-factors {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.match-factors th,
+.match-factors td {
+  padding: 0.3rem 0.4rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line, rgba(127, 127, 127, 0.25));
+}
+
+@media (max-width: 640px) {
+  .match-factors thead {
+    display: none;
+  }
+
+  .match-factors tr,
+  .match-factors th,
+  .match-factors td {
+    display: block;
+  }
+}
+
 .faculty-papers {
   margin: 0.25rem 0;
   padding-left: 1.1rem;

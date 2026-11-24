@@ -22,8 +22,8 @@ iDs. Phase 5c attaches papers from OpenAlex keyed only by that stated ORCID iD
 faculty to the `/research` web screen.
 Phase 6a adds an explainable matching service (`matching.py`, ADR-022) and 6b
 a per-user shortlist with score snapshots (`shortlist.py`); 6c exposes ranked
-matches and the shortlist over the HTTP API (`recommendations.py`). The web
-screens come next. OAuth and sending are
+matches and the shortlist over the HTTP API (`recommendations.py`), and 6d
+adds the `/matches` web screen. OAuth and sending are
 not implemented, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).

@@ -222,7 +222,8 @@ optimization) have no predecessor.
 | 6a | Explainable matching service: keyword factors, eligibility gates, ranking | merged (PR #34, ADR-022) |
 | 6b | Per-user shortlist with score snapshots (migration 10), export, refresh | merged (PR #35, ADR-022) |
 | 6c | Matching and shortlist API (`/api/match/*`, `/api/shortlist*`) | merged (PR #36, ADR-022) |
-| 6-fix | QA post-merge #34/#35 follow-ups, `SCORING_VERSION` 2, `MatchingError` handler (QA #36 n2) | this PR (ADR-022) |
+| 6-fix | QA post-merge #34/#35 follow-ups, `SCORING_VERSION` 2, `MatchingError` handler (QA #36 n2) | merged (PR #37, ADR-022) |
+| 6d | `/matches` web screen: ranked tabs, explanations, multi-select shortlist, exclude, saved scores | this PR (ADR-022) |
 
 Phase 2c-2 notes for reviewers:
 
@@ -993,3 +994,26 @@ makes the existing `register`/`login` safe to expose.
   summary-loaded member) comes from the request. n1 (a per-user rate limit on
   `/api/match/*`) follows in its own PR.
 
+## 34. Phase 6d notes (matches web screen)
+
+* New `/matches` page (`web/app/matches/page.tsx`) and
+  `web/components/match-browser.tsx`, linked as "Matches" in the header. The
+  Owner chose a separate page over a toggle inside `/research` (2026-11-24).
+* Faculty and Programs tabs read `/api/match/*` with area/country filters and
+  paging; `truncated` shows a hint. Each card has the score, an eligibility
+  label, failed gates listed first, a "Why this score" table (factors that do
+  not apply are hidden, not shown as zero) and the unknowns.
+* Multi-select: checkboxes plus "Shortlist selected (N)" send one
+  `POST /api/shortlist`. Single Shortlist and Exclude buttons per card. After
+  any change the ranked list and the shortlist are re-read.
+* "My shortlist" shows the saved score and date, an "Out of date" note when
+  `current` is false with a "Refresh saved scores" button, failed eligibility
+  at save time, and Remove. The screen never polls.
+* Without a profile (`404 profile_missing`) the screen links to `/onboarding`;
+  401 shows the signed-out panel; a 429 shows the wait time.
+* `web/lib/api.ts` gains the matching and shortlist types and calls;
+  `web/lib/errors.ts` maps `shortlist_full`, `shortlist_item_missing`,
+  `faculty_missing`, `program_missing` and `invalid_matching`. The roadmap marks
+  explainable matching as available.
+* Tests: 10 new (`web/components/match-browser.test.tsx`); the roadmap count
+  test moves to 6 available, 4 planned.
