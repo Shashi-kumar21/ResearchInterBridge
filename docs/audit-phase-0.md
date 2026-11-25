@@ -225,6 +225,9 @@ optimization) have no predecessor.
 | 6-fix | QA post-merge #34/#35 follow-ups, `SCORING_VERSION` 2, `MatchingError` handler (QA #36 n2) | merged (PR #37, ADR-022) |
 | 6c-fix | Per-account rate limit on the scoring routes (QA #36 n1) | merged (PR #38) |
 | 6d | `/matches` web screen: ranked tabs, explanations, multi-select shortlist, exclude, saved scores | merged (PR #39, ADR-022) |
+| 6d-fix | Shortlist listing counted against the scoring budget (QA note on #38) | merged (PR #40) |
+| 6-perf | Cheap shortlist listing, per-student ranked-id cache, closing-date check (`docs/audit/6-perf.md`) | merged (PR #41) |
+| 6e | Cross-user reuse of candidate ids by OECD-field bucket, k >= 3, audited (`docs/audit/phase-6e.md`) | merged (PR #42, ADR-023) |
 
 Phase 2c-2 notes for reviewers:
 

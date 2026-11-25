@@ -4,8 +4,8 @@ Local-first assistant that helps students find international research
 internships, identify relevant professors and papers, prepare evidence-backed
 outreach, and send approved email through connected accounts.
 
-Status: **Phase 4 — auth, profile, documents, research cache and the web
-screens**. Accounts, consent, sessions, profiles, document ingestion
+Status: **Phase 6 complete — explainable matching and the shortlist** (Phases 1-6
+delivered except the Phase 3 OCR fallback). Accounts, consent, sessions, profiles, document ingestion
 (PDF/DOCX/TXT), candidate-fact confirmation, apply-to-profile and cache-only
 research browsing work from the CLI and the HTTP API, and the Next.js site in
 `web/` can register, sign in, edit the profile, upload a document, review facts
