@@ -375,3 +375,49 @@ def test_expired_ranked_lists_are_swept_on_put(monkeypatch: pytest.MonkeyPatch) 
     assert "old" not in recommendations._cache
     assert recommendations.CACHE_MAX_ENTRIES == 64
     assert time.monotonic() > 0
+
+
+def test_reaching_k_keeps_unmapped_and_blank_records(settings: Settings) -> None:
+    # QA B1 on #42: a student's list must not lose records the taxonomy cannot
+    # place ("other") or that state no areas once the bucket reaches k = 3.
+    seed(settings)
+    with db.session(settings.database_path) as connection:
+        # A different query: the same one would be served from the cache.
+        fac.search_faculty(
+            connection,
+            fac.FacultyQuery(country="Germany"),
+            adapter=FacultyAdapter(
+                records=(
+                    person("Mo Dyn", "mo", ("molecular dynamics",)),
+                    person("Bea Blank", "bea", ()),
+                )
+            ),
+            now=datetime.now(UTC),
+        )
+    first = student(settings, "k1@example.edu", ["machine learning", "molecular dynamics"])
+    before = {i["faculty"]["full_name"] for i in first.get("/api/match/faculty").json()["items"]}
+    for index in (2, 3):
+        student(settings, f"k{index}@example.edu", ["machine learning"]).get("/api/match/faculty")
+    recommendations.clear_cache()
+    after = {i["faculty"]["full_name"] for i in first.get("/api/match/faculty").json()["items"]}
+
+    assert {"Jane Doe", "Ada Byron", "Mo Dyn", "Bea Blank", "Ravi Kumar"} <= before
+    # Only a record whose areas all map to known fields outside the bucket
+    # (medieval history -> 6.1) is left out; nothing unknown is dropped.
+    assert after == before - {"Ravi Kumar"}
+    assert len(audit_rows(settings)) == 1
+
+
+def test_an_unchanged_bucket_is_not_rewritten(settings: Settings) -> None:
+    # QA n1 on #42: a read, not a write, on every match miss.
+    seed(settings)
+    client = student(settings, "same@example.edu", ["machine learning"])
+    client.get("/api/match/faculty")
+    with db.session(settings.database_path) as connection:
+        first = connection.execute("SELECT updated_at FROM profile_buckets").fetchone()[0]
+    recommendations.clear_cache()
+    client.get("/api/match/faculty")
+    with db.session(settings.database_path) as connection:
+        again = connection.execute("SELECT updated_at FROM profile_buckets").fetchone()[0]
+
+    assert again == first

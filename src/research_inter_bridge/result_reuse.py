@@ -85,6 +85,12 @@ def record_membership(connection: sqlite3.Connection, user_id: int, bucket: Buck
     if bucket is None:
         connection.execute("DELETE FROM profile_buckets WHERE user_id = ?", (user_id,))
         return
+    current = connection.execute(
+        "SELECT bucket_id FROM profile_buckets WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    if current is not None and current["bucket_id"] == bucket.id:
+        # Unchanged: a read instead of a write on every match miss (QA n1 on #42).
+        return
     connection.execute(
         "INSERT INTO profile_buckets (user_id, bucket_id, updated_at) VALUES (?, ?, ?) "
         "ON CONFLICT (user_id) DO UPDATE SET bucket_id = excluded.bucket_id, "
@@ -125,9 +131,11 @@ def candidates(
 ) -> CandidateSet:
     """The bucket's candidate ids for this query: reused when stored, else built.
 
-    Building reads the cache through ``collect`` and keeps records whose stated
-    areas share an OECD field with the bucket, most shared fields first. It uses
-    the bucket's fields only, so the set says nothing about any one student.
+    Building reads the cache through ``collect`` and drops only records whose
+    stated areas all map to known OECD fields outside the bucket. Records with
+    no stated areas or an unplaceable (``other``) area are kept. Ordering puts
+    the most shared fields first. It uses the bucket's fields only, so the set
+    says nothing about any one student.
     """
 
     fingerprint = query_fingerprint(target_type, filters)
@@ -159,9 +167,10 @@ def candidates(
     wanted = set(bucket.fields)
     ranked: list[tuple[int, int]] = []
     for record in records:
+        if _excluded_by_bucket(areas_of(record), wanted):
+            continue
         overlap = len(taxonomy.fields_for(areas_of(record)) & wanted)
-        if overlap:
-            ranked.append((-overlap, id_of(record)))
+        ranked.append((-overlap, id_of(record)))
     ids = tuple(record_id for _, record_id in sorted(ranked)[:cap])
     by_id = {id_of(record): record for record in records}
     connection.execute(
@@ -183,6 +192,22 @@ def candidates(
     return CandidateSet(
         ids=ids, truncated=truncated, reused=False, built=tuple(by_id[i] for i in ids)
     )
+
+
+def _excluded_by_bucket(areas: Sequence[str], wanted: set[str]) -> bool:
+    """True only when every stated area maps to a known field outside the bucket.
+
+    A record with no stated areas, or with any area the taxonomy cannot place
+    (``other``), is kept: dropping it would change what a student sees once the
+    bucket reaches k (QA B1 on #42).
+    """
+
+    if not areas:
+        return False
+    mapped = taxonomy.fields_for(areas)
+    if taxonomy.OTHER in mapped:
+        return False
+    return not (mapped & wanted)
 
 
 def export_payload(connection: sqlite3.Connection, user_id: int) -> dict[str, object] | None:

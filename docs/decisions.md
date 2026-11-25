@@ -831,9 +831,13 @@ from soft ranking, and names unknowns.
 
 **Consequences:**
 
-* On reuse, candidates are limited to records sharing an OECD field with the
-  bucket, so a record with no field overlap is not ranked for that query. It
+* On reuse, the only records left out are those whose stated areas all map to
+  known OECD fields outside the bucket. A record with no stated areas, or with
+  any area the taxonomy cannot place (`other`), is always kept, so reaching k
+  never hides a record the bucket cannot judge (QA B1 on #42). A left-out record
   would score near zero on research fit anyway.
+* The audit row keeps the full `reused_ids` list, because §13.4 item 5 names
+  "reused ids". The list is capped at `MAX_CANDIDATES` (300).
 * Generic taxonomy keywords pull in wrong fields ("design" matched "protein
   design"), so the map uses specific phrases, and a test pins known traps.
 

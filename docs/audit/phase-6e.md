@@ -55,3 +55,17 @@ taxonomy integrity and generic-word traps, k = 2, build then reuse,
 acceptance test 33, per-student re-scoring, `other` never reuses, expired sets
 are not reused, membership cascade and export, and the cache sweep. The
 account export test expects `profile_bucket`.
+
+## QA review of #42 (REQUEST_CHANGES), fixed on the branch
+
+* B1: building a set no longer drops records whose areas are empty or map to
+  `other`. Only a record whose areas all map to known fields outside the bucket
+  is left out (`result_reuse._excluded_by_bucket`). Test: a student keeps the
+  same list before and after the bucket reaches k = 3, apart from that one
+  known-disjoint record.
+* n1: `record_membership` reads first and writes only when the bucket changed.
+  Test: an unchanged bucket keeps its `updated_at`.
+* n2 (not changed): the audit row keeps `reused_ids`, because §13.4 item 5
+  names them. The list is capped at 300 ids. A count and hash instead would
+  need an Owner decision against the spec.
+
