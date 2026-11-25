@@ -10,7 +10,7 @@ export function SiteHeader() {
       <Link className="brand" href="/">
         ResearchInterBridge
       </Link>
-      <span className="phase">Phase 4 · no email can be sent yet</span>
+      <span className="phase">Phase 6 · no email can be sent yet</span>
       <nav className="site-nav" aria-label="Account">
         <Link href="/onboarding">Profile</Link>
         <Link href="/documents">Documents</Link>
