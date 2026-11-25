@@ -549,12 +549,21 @@ def test_export_returns_the_account_structure_without_secrets(client: TestClient
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     body = response.json()
-    assert set(body) == {"account", "consents", "profile", "documents", "facts", "shortlist"}
+    assert set(body) == {
+        "account",
+        "consents",
+        "profile",
+        "documents",
+        "facts",
+        "shortlist",
+        "profile_bucket",
+    }
     assert body["account"]["email"] == EMAIL
     assert body["profile"] is None
     assert body["documents"] == []
     assert body["facts"] == []
     assert body["shortlist"] == []
+    assert body["profile_bucket"] is None
     assert body["consents"]["personal_data"] is True
     assert PASSWORD not in response.text
     assert "scrypt" not in response.text

@@ -36,7 +36,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 from typing import Generic, TypeVar
 
-from . import discovery, matching, profiles
+from . import discovery, matching, profiles, result_reuse
 from . import faculty as faculty_service
 from . import shortlist as shortlist_service
 
@@ -47,7 +47,7 @@ MAX_CANDIDATES = 300
 #: How long a student's ranked list is reused for paging.
 CACHE_TTL_SECONDS = 120
 #: Ranked lists kept per process; the oldest is dropped first.
-CACHE_MAX_ENTRIES = 256
+CACHE_MAX_ENTRIES = 64
 
 T = TypeVar("T")
 
@@ -130,6 +130,9 @@ def faculty_matches(
             connection, ids, now=now, include_publications=False
         ),
         lambda member: member.id,
+        lambda ids: faculty_service._load_faculty(connection, ids, now=now),
+        lambda member: member.research_interests,
+        now,
         limit=limit,
         offset=offset,
         include_excluded=include_excluded,
@@ -173,6 +176,9 @@ def program_matches(
         lambda program: matching.score_program(profile, program, today=day, weights=weights),
         lambda ids: discovery._load_programs(connection, ids, now=now),
         lambda program: program.id,
+        lambda ids: discovery._load_programs(connection, ids, now=now),
+        lambda program: program.research_areas,
+        now,
         limit=limit,
         offset=offset,
         include_excluded=include_excluded,
@@ -205,6 +211,9 @@ def _ranked(
     score: Callable[[T], matching.MatchResult],
     load: Callable[[Sequence[int]], Sequence[T]],
     id_of: Callable[[T], int],
+    load_full: Callable[[Sequence[int]], Sequence[T]],
+    areas_of: Callable[[T], Sequence[str]],
+    now: datetime,
     *,
     limit: int,
     offset: int,
@@ -226,7 +235,18 @@ def _ranked(
     if hit is not None:
         ranked, truncated = hit
     else:
-        records, truncated = collect()
+        records, truncated = _candidates(
+            connection,
+            user_id,
+            target_type,
+            filters,
+            profile,
+            collect,
+            load_full,
+            areas_of,
+            id_of,
+            now,
+        )
         scored: list[_RankedEntry] = []
         for record in records:
             result = score(record)
@@ -256,6 +276,49 @@ def _ranked(
         offset=offset,
         truncated=truncated,
     )
+
+
+def _candidates(
+    connection: sqlite3.Connection,
+    user_id: int,
+    target_type: str,
+    filters: object,
+    profile: profiles.StudentProfile,
+    collect: Callable[[], tuple[list[T], bool]],
+    load_full: Callable[[Sequence[int]], Sequence[T]],
+    areas_of: Callable[[T], Sequence[str]],
+    id_of: Callable[[T], int],
+    now: datetime,
+) -> tuple[list[T], bool]:
+    """Candidates to score: the bucket's shared id set when k >= 3, else all.
+
+    Reuse shares candidate ids only; the caller re-scores them with this
+    student's own profile (§13.4, ADR-023).
+    """
+
+    bucket = result_reuse.bucket_for(profile)
+    result_reuse.record_membership(connection, user_id, bucket)
+    if bucket is None:
+        return collect()
+    members = result_reuse.member_count(connection, bucket.id)
+    if members < result_reuse.MIN_PROFILES:
+        return collect()
+    found = result_reuse.candidates(
+        connection,
+        bucket,
+        target_type,
+        filters,
+        members=members,
+        collect=collect,
+        areas_of=areas_of,
+        id_of=id_of,
+        now=now,
+        cap=MAX_CANDIDATES,
+    )
+    if not found.reused:
+        return list(found.built), found.truncated  # type: ignore[arg-type]
+    by_id = {id_of(record): record for record in load_full(found.ids)}
+    return [by_id[i] for i in found.ids if i in by_id], found.truncated
 
 
 def _cache_key(
@@ -309,7 +372,14 @@ def _cache_get(key: str) -> tuple[tuple[_RankedEntry, ...], bool] | None:
 
 def _cache_put(key: str, ranked: tuple[_RankedEntry, ...], truncated: bool) -> None:
     with _cache_lock:
-        _cache[key] = (time.monotonic(), ranked, truncated)
+        now = time.monotonic()
+        # Sweep expired lists on every put, so an idle worker does not keep up
+        # to CACHE_MAX_ENTRIES stale lists alive (QA n2 on #41).
+        for stale in [
+            k for k, (stored, _, _) in _cache.items() if now - stored > CACHE_TTL_SECONDS
+        ]:
+            del _cache[stale]
+        _cache[key] = (now, ranked, truncated)
         _cache.move_to_end(key)
         while len(_cache) > CACHE_MAX_ENTRIES:
             _cache.popitem(last=False)

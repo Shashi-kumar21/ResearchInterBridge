@@ -495,6 +495,38 @@ MIGRATIONS: tuple[Migration, ...] = (
             "ON match_scores (shortlist_item_id, id)",
         ),
     ),
+    Migration(
+        version=11,
+        name="result_set_reuse",
+        statements=(
+            # task.md §13.4 / ADR-023. One row per student: the bucket their
+            # derived, non-identifying features fall in. Per-user, cascade on
+            # account deletion; only counted, never read for another student.
+            """
+            CREATE TABLE IF NOT EXISTS profile_buckets (
+                user_id INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+                bucket_id TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_profile_buckets_bucket ON profile_buckets (bucket_id)",
+            # Shared and public: the candidate ids of public cache records for a
+            # bucket and query. Built from bucket features only, never from one
+            # student's profile, and holding no scores.
+            """
+            CREATE TABLE IF NOT EXISTS bucket_result_sets (
+                bucket_id TEXT NOT NULL,
+                target_type TEXT NOT NULL CHECK (target_type IN ('faculty', 'program')),
+                query_fingerprint TEXT NOT NULL,
+                candidate_ids_json TEXT NOT NULL,
+                truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY (bucket_id, target_type, query_fingerprint)
+            )
+            """,
+        ),
+    ),
 )
 
 
