@@ -841,3 +841,33 @@ from soft ranking, and names unknowns.
 * Generic taxonomy keywords pull in wrong fields ("design" matched "protein
   design"), so the map uses specific phrases, and a test pins known traps.
 
+## ADR-024 — CV optimization: rule-based suggestions first, structured-text versions
+
+**Status:** accepted 2026-11-25 · **Decided by:** Owner (options and recommendation by Dev) · **Spec:** `task.md` §3.7, §6
+
+**Options considered and decisions (Owner, 2026-11-25):**
+
+1. Suggestion engine: (a) deterministic rules now with the §6 LLM provider
+   layer built alongside, but switched off; (b) LLM rewrites now; (c) rules
+   only. **Chosen: (a).** No API cost and nothing can be invented, because
+   rules only reorder, surface and flag the student's own confirmed content.
+   Real rewrite suggestions switch on when the Owner picks a provider.
+2. Approved CV versions: (a) structured text, PDF later; (b) edit the DOCX;
+   (c) render a PDF now. **Chosen: (a).** No new dependency and no file is
+   touched; a PDF is rendered only when Phase 8/9 attaches a version.
+3. LLM provider: (a) decide later; (b) Anthropic; (c) OpenAI. **Chosen: (a).**
+   Only the interface and a mock are built until the Owner picks a provider,
+   model and budget.
+
+**Rules (7a, `cv.py`, migration 12):**
+
+* The uploaded CV is split once into sections (a canonical kind plus the
+  heading as written) and bullet lines, and stored as the `original` version.
+  Splitting only regroups lines: nothing is added, reworded or dropped.
+* A database trigger refuses any `UPDATE` of an original version, so it can
+  never be silently modified. A `tailored` version must name its parent,
+  target and approval time (a CHECK constraint), so it cannot exist unapproved.
+* One original per document (a partial unique index); `cv_versions` is
+  per-user, cascades on account or document deletion, and is in the account
+  export.
+
