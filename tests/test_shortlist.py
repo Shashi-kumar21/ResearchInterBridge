@@ -377,3 +377,46 @@ def _fields(profile: StudentProfile) -> dict[str, object]:
         for name in StudentProfile.__dataclass_fields__
         if name not in ("created_at", "updated_at")
     }
+
+
+def test_listing_never_loads_or_scores_targets(
+    connection: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Owner priority: GET /api/shortlist must stay cheap (QA item 2).
+    ids = seed(connection)
+    user = student(connection)
+    sl.add(connection, user, [fac_target(ids, "Jane Doe")], today=TODAY)
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("listing must not load a full target")
+
+    monkeypatch.setattr(sl.faculty_service, "get_faculty", forbidden)
+    monkeypatch.setattr(sl.discovery, "get_program", forbidden)
+
+    (entry,) = sl.list_items(connection, user, today=TODAY)
+    assert entry.target_name == "Jane Doe"
+    assert entry.current is True
+
+
+def test_a_passed_closing_date_makes_a_program_snapshot_out_of_date(
+    connection: sqlite3.Connection,
+) -> None:
+    # QA on the perf plan: a snapshot must never stay "eligible" after the
+    # stated deadline passed (§13.3), even though nothing else changed.
+    ids = seed(connection)
+    user = student(connection, degree_type=DegreeType.PHD)
+    connection.execute(
+        "UPDATE programs SET closing_date = ? WHERE id = ?", ("2026-12-01", ids["PhD Robotics"])
+    )
+    target = sl.Target("program", ids["PhD Robotics"])
+    sl.add(connection, user, [target], today=TODAY)
+
+    before = sl.list_items(connection, user, today=date(2026, 11, 30))[0]
+    after = sl.list_items(connection, user, today=date(2026, 12, 2))[0]
+    sl.refresh(connection, user, today=date(2026, 12, 2))
+    refreshed = sl.list_items(connection, user, today=date(2026, 12, 2))[0]
+
+    assert before.current is True
+    assert after.current is False
+    assert refreshed.current is True
+    assert refreshed.snapshot is not None and refreshed.snapshot.eligibility == "ineligible"

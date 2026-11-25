@@ -427,7 +427,7 @@ describe("MatchBrowser", () => {
     await user.click(await screen.findByRole("button", { name: "Exclude Ravi Kumar" }));
     await user.click(await screen.findByRole("button", { name: "Undo" }));
 
-    expect(await screen.findByText("The entry is back in your matches.")).toBeVisible();
+    expect(await screen.findByText("Ravi Kumar is back in your matches.")).toBeVisible();
     expect(screen.getAllByRole("heading", { name: "Ravi Kumar" })).toHaveLength(1);
   });
 

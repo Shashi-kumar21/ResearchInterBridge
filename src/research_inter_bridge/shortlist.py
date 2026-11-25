@@ -226,9 +226,12 @@ def list_items(
 ) -> tuple[ShortlistEntry, ...]:
     """The student's rows, best snapshot first; ineligible ones after the rest.
 
-    Each row is re-scored to compute ``current`` (one full faculty or program
-    load per row, at most ``MAX_ITEMS``). Fine at this size; cache or paginate
-    if a screen starts polling it (QA f2 on #35).
+    Nothing is re-scored here (Owner priority: low latency, low cost). One light
+    read per target type gives each record's name, last-checked time and, for
+    programs, closing date. A snapshot is ``current`` when its fingerprint still
+    matches and, for a program, no stated closing date has passed since it was
+    evaluated (a passed deadline must never stay "eligible", §13.3). Use
+    :func:`refresh` to re-score.
     """
 
     if status is not None and status not in ("shortlisted", "excluded"):
@@ -244,20 +247,16 @@ def list_items(
         f"SELECT * FROM shortlist_items WHERE {where} ORDER BY id",  # noqa: S608
         parameters,
     ).fetchall()
+    facts = _target_facts(connection, rows)
     entries: list[ShortlistEntry] = []
     for row in rows:
         target = Target(str(row["target_type"]), int(row["target_id"]))
         snapshot = _latest_snapshot(connection, int(row["id"]))
-        name: str | None
+        fact = facts.get(target)
+        name = None if fact is None else fact.name
         current: bool | None = None
-        try:
-            if profile is not None:
-                result, name = _score(connection, profile, target, day, weights)
-                current = None if snapshot is None else _same(snapshot, result)
-            else:
-                name = _target_name(connection, target)
-        except (FacultyNotFoundError, ProgramNotFoundError):
-            name = None
+        if profile is not None and snapshot is not None and fact is not None:
+            current = _cheap_current(snapshot, target, fact, profile, day, weights)
         entries.append(
             ShortlistEntry(
                 id=int(row["id"]),
@@ -272,6 +271,69 @@ def list_items(
             )
         )
     return tuple(sorted(entries, key=_entry_order))
+
+
+@dataclass(frozen=True, slots=True)
+class _TargetFact:
+    name: str
+    last_checked_at: str | None
+    closing_date: str | None
+
+
+def _target_facts(
+    connection: sqlite3.Connection, rows: Sequence[sqlite3.Row]
+) -> dict[Target, _TargetFact]:
+    """Name, last-checked time and closing date per target, in two batched reads."""
+
+    wanted: dict[str, list[int]] = {"faculty": [], "program": []}
+    for row in rows:
+        wanted[str(row["target_type"])].append(int(row["target_id"]))
+    facts: dict[Target, _TargetFact] = {}
+    queries = {
+        "faculty": "SELECT id, full_name AS name, last_checked_at, NULL AS closing_date "
+        "FROM faculty_members WHERE id IN ({})",
+        "program": "SELECT id, name, last_checked_at, closing_date FROM programs WHERE id IN ({})",
+    }
+    for kind, ids in wanted.items():
+        for batch in discovery._batches(ids):
+            placeholders = ", ".join("?" for _ in batch)
+            for row in connection.execute(queries[kind].format(placeholders), batch):
+                facts[Target(kind, int(row["id"]))] = _TargetFact(
+                    name=str(row["name"]),
+                    last_checked_at=None
+                    if row["last_checked_at"] is None
+                    else str(row["last_checked_at"]),
+                    closing_date=None if row["closing_date"] is None else str(row["closing_date"]),
+                )
+    return facts
+
+
+def _cheap_current(
+    snapshot: Snapshot,
+    target: Target,
+    fact: _TargetFact,
+    profile: profiles.StudentProfile,
+    day: date,
+    weights: matching.MatchWeights,
+) -> bool:
+    fingerprint = matching.inputs_fingerprint(
+        target.type,  # type: ignore[arg-type]
+        target.id,
+        fact.last_checked_at,
+        profile,
+        weights,
+    )
+    if fingerprint != snapshot.inputs_fingerprint:
+        return False
+    if fact.closing_date:
+        try:
+            closing = date.fromisoformat(fact.closing_date)
+            evaluated = date.fromisoformat(snapshot.evaluated_on)
+        except ValueError:
+            return True
+        if closing < day and evaluated <= closing:
+            return False
+    return True
 
 
 def statuses(connection: sqlite3.Connection, user_id: int, target_type: str) -> dict[int, str]:
@@ -373,12 +435,6 @@ def _require_target(connection: sqlite3.Connection, target: Target, now: datetim
         faculty_service.get_faculty(connection, target.id, now=now)
     else:
         discovery.get_program(connection, target.id, now=now)
-
-
-def _target_name(connection: sqlite3.Connection, target: Target) -> str:
-    if target.type == "faculty":
-        return faculty_service.get_faculty(connection, target.id).full_name
-    return discovery.get_program(connection, target.id).name
 
 
 def _score(

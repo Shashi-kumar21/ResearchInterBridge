@@ -1224,9 +1224,8 @@ def list_shortlist(
     """The signed-in student's shortlist with stored snapshots, best first."""
 
     response.headers["Cache-Control"] = "no-store"
-    # Listing re-scores every row to compute `current`, which can be more work
-    # than a match call, so it spends the same budget (QA note on #38).
-    _check_match_budget(connection, account.user_id)
+    # Listing no longer re-scores (two light reads), so it is not counted against
+    # the scoring budget; one Shortlist click spends one unit (QA n5 on #39).
     entries = shortlist_service.list_items(connection, account.user_id, status=status_filter)
     return ShortlistListOut(
         items=[

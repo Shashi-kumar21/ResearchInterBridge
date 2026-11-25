@@ -671,6 +671,44 @@ def _profile_inputs(profile: StudentProfile) -> dict[str, object]:
     }
 
 
+def inputs_fingerprint(
+    target_type: TargetType,
+    target_id: int,
+    last_checked_at: str | None,
+    profile: StudentProfile,
+    weights: MatchWeights = DEFAULT_WEIGHTS,
+) -> str:
+    """The fingerprint a score would carry, computed without loading the target.
+
+    Only the target's id and last-checked time are needed, so a shortlist can
+    tell whether a stored snapshot is current with one cheap read per row.
+    """
+
+    return _fingerprint(
+        target_type,
+        weights,
+        {
+            "profile": _profile_inputs(profile),
+            "target": {"id": target_id, "last_checked_at": last_checked_at},
+        },
+    )
+
+
+def _fingerprint(target_type: str, weights: MatchWeights, parts: Mapping[str, object]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "version": SCORING_VERSION,
+                "type": target_type,
+                "weights": weights.as_dict(),
+                **parts,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def _result(
     target_type: TargetType,
     target_id: int,
@@ -687,18 +725,7 @@ def _result(
     possible = sum(factor.weight for factor in applicable)
     earned = sum(factor.points for factor in applicable)
     score = 0 if possible <= 0 else round(100 * earned / possible)
-    fingerprint = hashlib.sha256(
-        json.dumps(
-            {
-                "version": SCORING_VERSION,
-                "type": target_type,
-                "weights": weights.as_dict(),
-                **fingerprint_parts,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    fingerprint = _fingerprint(target_type, weights, fingerprint_parts)
     return MatchResult(
         target_type=target_type,
         target_id=target_id,
