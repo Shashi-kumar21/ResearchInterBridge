@@ -798,3 +798,46 @@ from soft ranking, and names unknowns.
   taxonomy layer.
 * A record with little stated data scores low and carries many gaps rather than
   being guessed upward.
+
+## ADR-023 — Cross-user reuse of candidate sets by OECD-field bucket
+
+**Status:** accepted 2026-11-25 · **Decided by:** Owner (taxonomy options and recommendation by Dev; rules reviewed with QA) · **Spec:** `task.md` §13.4 items 3-5, acceptance test 33
+
+**Options considered for the taxonomy:** (a) OECD Fields of Science second-level list; (b) OpenAlex topics; (c) our own short list. **Chosen (Owner, 2026-11-24): (a)**: 42 fields, public, stable, offline, and coarse enough that a bucket cannot single out a student.
+
+**Rules (`taxonomy.py`, `result_reuse.py`, `recommendations._candidates`):**
+
+* A bucket is the hash of three derived features: the OECD fields of the
+  student's research keywords, their degree level and their target countries.
+  Name, email, GPA, skills, documents and free text never enter it. Keywords
+  that map to no field are `other`; a student with only `other` has no bucket
+  and is always scored normally.
+* A candidate set is reused only when at least 3 distinct students are in the
+  bucket (`MIN_PROFILES`). Below that, matching computes normally and nothing is
+  stored.
+* The shared set holds **candidate ids of public cache records only**, chosen
+  from the bucket's fields and the query filters, never from one student's
+  profile. No score, gate or snapshot is shared; every student re-scores the
+  candidates with their own profile.
+* Every reuse writes `match.result_reuse` with actor `system` and metadata
+  `query_fingerprint`, `target_type`, `reused_ids` and `bucket_members`; the
+  bucket id is the audit target. The query fingerprint hashes only the target
+  type and the API filters (area, country, ids), not the profile, so an audit
+  row cannot be linked back to one student's interests.
+* A set expires after 6 hours and is rebuilt lazily on the next qualifying
+  request. No background job and no paid service.
+* `profile_buckets` (one row per student) cascades on account deletion and
+  appears in the account export as an id only.
+
+**Consequences:**
+
+* On reuse, the only records left out are those whose stated areas all map to
+  known OECD fields outside the bucket. A record with no stated areas, or with
+  any area the taxonomy cannot place (`other`), is always kept, so reaching k
+  never hides a record the bucket cannot judge (QA B1 on #42). A left-out record
+  would score near zero on research fit anyway.
+* The audit row keeps the full `reused_ids` list, because §13.4 item 5 names
+  "reused ids". The list is capped at `MAX_CANDIDATES` (300).
+* Generic taxonomy keywords pull in wrong fields ("design" matched "protein
+  design"), so the map uses specific phrases, and a test pins known traps.
+

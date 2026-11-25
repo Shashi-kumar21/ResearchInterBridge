@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import consent, db, documents, profiles, shortlist
+from . import consent, db, documents, profiles, result_reuse, shortlist
 from .errors import AuthError, ConsentError
 from .logging import get_logger
 
@@ -616,6 +616,7 @@ def export_account_data(connection: sqlite3.Connection, user_id: int) -> dict[st
             for fact in profiles.list_profile_facts(connection, user_id)
         ],
         "shortlist": shortlist.export_payload(connection, user_id),
+        "profile_bucket": result_reuse.export_payload(connection, user_id),
     }
 
 

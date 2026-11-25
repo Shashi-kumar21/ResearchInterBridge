@@ -23,7 +23,8 @@ faculty to the `/research` web screen.
 Phase 6a adds an explainable matching service (`matching.py`, ADR-022) and 6b
 a per-user shortlist with score snapshots (`shortlist.py`); 6c exposes ranked
 matches and the shortlist over the HTTP API (`recommendations.py`), and 6d
-adds the `/matches` web screen. OAuth and sending are
+adds the `/matches` web screen. 6e reuses a bucket's candidate ids across
+students with the same OECD fields, degree and countries (k >= 3, ADR-023). OAuth and sending are
 not implemented, and nothing in this repository can send email.
 
 * Product specification: `task.md` (Owner-owned source of truth).
@@ -355,6 +356,8 @@ src/research_inter_bridge/    Python package
   matching.py                 explainable 0-100 matching, eligibility gates, ranking
   shortlist.py                per-user shortlist, exclusions, score snapshots
   recommendations.py          ranked, explained matches over the cache for one student
+  taxonomy.py                 OECD Fields of Science map for reuse buckets
+  result_reuse.py             k>=3 cross-user reuse of candidate id sets, audited
   http_source.py              polite contact-bearing HTTP GET boundary (ADR-017)
   program_pages.py            explicit schema.org JSON-LD program parser
   api/                        FastAPI app: sessions, CORS, consent and account routes
