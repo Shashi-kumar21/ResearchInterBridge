@@ -48,6 +48,10 @@ SECTION_ALIASES: dict[str, tuple[str, ...]] = {
     "awards": ("awards", "honours", "honors", "achievements", "scholarships"),
     "activities": ("activities", "leadership", "volunteering", "extracurricular"),
     "languages": ("languages",),
+    "certifications": ("certifications", "certificates", "licenses"),
+    "research_interests": ("research interests", "areas of interest"),
+    "interests": ("interests", "hobbies", "hobbies and interests"),
+    "references": ("references", "referees"),
 }
 _HEADING_LOOKUP = {alias: kind for kind, aliases in SECTION_ALIASES.items() for alias in aliases}
 _BULLET_RE = re.compile(r"^\s*(?:[-*•–▪●]|\d+[.)])\s+")

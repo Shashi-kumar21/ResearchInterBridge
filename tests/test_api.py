@@ -558,6 +558,7 @@ def test_export_returns_the_account_structure_without_secrets(client: TestClient
         "shortlist",
         "profile_bucket",
         "cv_versions",
+        "cv_analyses",
     }
     assert body["account"]["email"] == EMAIL
     assert body["profile"] is None
@@ -566,6 +567,7 @@ def test_export_returns_the_account_structure_without_secrets(client: TestClient
     assert body["shortlist"] == []
     assert body["profile_bucket"] is None
     assert body["cv_versions"] == []
+    assert body["cv_analyses"] == []
     assert body["consents"]["personal_data"] is True
     assert PASSWORD not in response.text
     assert "scrypt" not in response.text
