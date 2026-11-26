@@ -527,6 +527,51 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=12,
+        name="cv_versions",
+        statements=(
+            # task.md §3.7 / ADR-024. Per-user, never shared. The original is the
+            # CV as uploaded, split into sections; later versions are tailored to
+            # one target and only exist after the student approves them.
+            """
+            CREATE TABLE IF NOT EXISTS cv_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                document_id INTEGER NOT NULL
+                    REFERENCES student_documents (id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK (kind IN ('original', 'tailored')),
+                parent_version_id INTEGER REFERENCES cv_versions (id) ON DELETE CASCADE,
+                target_type TEXT CHECK (target_type IN ('faculty', 'program')),
+                target_id INTEGER,
+                sections_json TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                approved_at TEXT,
+                CHECK (
+                    (kind = 'original' AND parent_version_id IS NULL AND target_type IS NULL
+                        AND target_id IS NULL)
+                    OR (kind = 'tailored' AND parent_version_id IS NOT NULL
+                        AND target_type IS NOT NULL AND target_id IS NOT NULL
+                        AND approved_at IS NOT NULL)
+                )
+            )
+            """,
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_cv_versions_one_original "
+            "ON cv_versions (document_id) WHERE kind = 'original'",
+            "CREATE INDEX IF NOT EXISTS idx_cv_versions_user ON cv_versions (user_id, kind)",
+            # The original is the student's source document: never silently
+            # modified (§3.7). The database itself refuses an update.
+            """
+            CREATE TRIGGER IF NOT EXISTS cv_versions_original_is_immutable
+            BEFORE UPDATE ON cv_versions
+            WHEN OLD.kind = 'original'
+            BEGIN
+                SELECT RAISE(ABORT, 'the original CV version cannot be modified');
+            END
+            """,
+        ),
+    ),
 )
 
 

@@ -205,6 +205,21 @@ class ShortlistItemNotFoundError(ShortlistError):
         super().__init__(message, code="shortlist_item_missing")
 
 
+class CvError(ResearchInterBridgeError):
+    """A CV request that cannot be served (wrong document kind, no text, ...)."""
+
+    def __init__(self, message: str, *, code: str = "invalid_cv") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class CvVersionNotFoundError(CvError):
+    """The caller has no CV version with that id."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="cv_version_missing")
+
+
 class FacultyNotFoundError(DiscoveryError):
     """A faculty id that is not in the shared cache."""
 
