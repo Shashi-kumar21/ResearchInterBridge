@@ -642,7 +642,8 @@ MIGRATIONS: tuple[Migration, ...] = (
                 created_at TEXT NOT NULL
             )
             """,
-            "CREATE INDEX IF NOT EXISTS idx_llm_usage_time ON llm_usage (created_at, user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_llm_usage_time ON llm_usage (created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_llm_usage_user_time ON llm_usage (user_id, created_at)",
             """
             CREATE TABLE IF NOT EXISTS llm_cache (
                 user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
