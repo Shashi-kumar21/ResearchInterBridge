@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, File, Form, Path, Query, Request, Response, UploadFile, status
@@ -10,6 +11,7 @@ from fastapi import APIRouter, File, Form, Path, Query, Request, Response, Uploa
 from .. import (
     auth,
     consent,
+    cv_suggestions,
     discovery,
     documents,
     facts,
@@ -19,6 +21,7 @@ from .. import (
     ratelimit,
     recommendations,
 )
+from .. import cv as cv_service
 from .. import faculty as faculty_service
 from .. import shortlist as shortlist_service
 from ..errors import (
@@ -45,6 +48,17 @@ from .schemas import (
     ConsentCatalogueOut,
     ConsentListOut,
     ConsentRequest,
+    CvAnalysisOut,
+    CvAnalysisRequest,
+    CvApprovalOut,
+    CvDecisionRequest,
+    CvDiffLineOut,
+    CvOriginalRequest,
+    CvPreviewOut,
+    CvSectionOut,
+    CvSuggestionOut,
+    CvVersionListOut,
+    CvVersionOut,
     DeleteAccountRequest,
     DepartmentListOut,
     DepartmentOut,
@@ -132,6 +146,17 @@ DISCOVERY_STATUS_CODES: dict[str, int] = {
     # No adapter is configured for live discovery; the browse routes never
     # raise this, but a future search route must not turn it into a 500.
     "discovery_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
+}
+
+CV_STATUS_CODES: dict[str, int] = {
+    "invalid_cv": status.HTTP_400_BAD_REQUEST,
+    "cv_version_missing": status.HTTP_404_NOT_FOUND,
+    "cv_run_missing": status.HTTP_404_NOT_FOUND,
+    # A re-analysis pruned the run this id belonged to; the screen reloads the
+    # latest analysis (QA n3 on #46).
+    "cv_suggestion_missing": status.HTTP_404_NOT_FOUND,
+    "cv_nothing_accepted": status.HTTP_409_CONFLICT,
+    "cv_nothing_changed": status.HTTP_409_CONFLICT,
 }
 
 SHORTLIST_STATUS_CODES: dict[str, int] = {
@@ -1292,4 +1317,181 @@ def remove_from_shortlist(
 
     shortlist_service.remove(
         connection, account.user_id, shortlist_service.Target(target_type, target_id)
+    )
+
+
+# --------------------------------------------------------------------------- #
+# CV versions and suggestions (Phase 7, ADR-024)
+# --------------------------------------------------------------------------- #
+
+
+def _cv_sections_out(sections: Sequence[cv_service.CvSection]) -> list[CvSectionOut]:
+    return [
+        CvSectionOut(kind=section.kind, heading=section.heading, bullets=list(section.bullets))
+        for section in sections
+    ]
+
+
+def _cv_version_out(version: cv_service.CvVersion) -> CvVersionOut:
+    return CvVersionOut(
+        id=version.id,
+        document_id=version.document_id,
+        kind=version.kind,  # type: ignore[arg-type]
+        parent_version_id=version.parent_version_id,
+        target_type=version.target_type,  # type: ignore[arg-type]
+        target_id=version.target_id,
+        sections=_cv_sections_out(version.sections),
+        created_at=version.created_at,
+        approved_at=version.approved_at,
+    )
+
+
+def _cv_suggestion_out(item: cv_suggestions.Suggestion) -> CvSuggestionOut:
+    return CvSuggestionOut(
+        id=item.id,
+        kind=item.kind,  # type: ignore[arg-type]
+        section=item.section,
+        bullet=item.bullet,
+        before=list(item.before),
+        after=list(item.after),
+        reason=item.reason,
+        evidence=list(item.evidence),
+        status=item.status,  # type: ignore[arg-type]
+        edited_text=item.edited_text,
+    )
+
+
+def _cv_run_out(run: cv_suggestions.AnalysisRun) -> CvAnalysisOut:
+    return CvAnalysisOut(
+        id=run.id,
+        version_id=run.version_id,
+        target_type=run.target_type,  # type: ignore[arg-type]
+        target_id=run.target_id,
+        target_name=run.target_name,
+        rules_version=run.rules_version,
+        created_at=run.created_at,
+        suggestions=[_cv_suggestion_out(item) for item in run.suggestions],
+    )
+
+
+def _cv_diff_out(changes: list[dict[str, object]]) -> list[CvDiffLineOut]:
+    return [CvDiffLineOut(op=c["op"], line=str(c["line"])) for c in changes]  # type: ignore[arg-type]
+
+
+def _check_cv_budget(connection: sqlite3.Connection, user_id: int) -> None:
+    ratelimit.check(connection, rule=ratelimit.CV_RULE, client=ratelimit.user_subject(user_id))
+
+
+@router.get("/cv/versions", response_model=CvVersionListOut, tags=["cv"])
+def list_cv_versions(
+    account: CurrentAccount, connection: Connection, response: Response
+) -> CvVersionListOut:
+    """The student's CV versions: originals and approved tailored ones."""
+
+    response.headers["Cache-Control"] = "no-store"
+    versions = cv_service.list_versions(connection, user_id=account.user_id)
+    return CvVersionListOut(versions=[_cv_version_out(version) for version in versions])
+
+
+@router.post("/cv/originals", response_model=CvVersionOut, tags=["cv"])
+def create_cv_original(
+    payload: CvOriginalRequest,
+    account: CurrentAccount,
+    connection: Connection,
+    settings: SettingsDep,
+) -> CvVersionOut:
+    """Split an uploaded CV into its immutable original version (idempotent)."""
+
+    _check_cv_budget(connection, account.user_id)
+    version = cv_service.create_original(
+        connection,
+        user_id=account.user_id,
+        document_id=payload.document_id,
+        data_directory=settings.data_directory,
+    )
+    return _cv_version_out(version)
+
+
+@router.post("/cv/analyses", response_model=CvAnalysisOut, tags=["cv"])
+def create_cv_analysis(
+    payload: CvAnalysisRequest, account: CurrentAccount, connection: Connection
+) -> CvAnalysisOut:
+    """Rule-based suggestions for one version and one target; reused when unchanged."""
+
+    _check_cv_budget(connection, account.user_id)
+    run = cv_suggestions.analyse(
+        connection,
+        user_id=account.user_id,
+        version_id=payload.version_id,
+        target_type=payload.target_type,
+        target_id=payload.target_id,
+    )
+    return _cv_run_out(run)
+
+
+@router.get("/cv/analyses/{run_id}", response_model=CvAnalysisOut, tags=["cv"])
+def get_cv_analysis(
+    run_id: Annotated[int, Path(ge=1)],
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+) -> CvAnalysisOut:
+    response.headers["Cache-Control"] = "no-store"
+    return _cv_run_out(cv_suggestions.get_run(connection, user_id=account.user_id, run_id=run_id))
+
+
+@router.patch("/cv/suggestions/{suggestion_id}", response_model=CvSuggestionOut, tags=["cv"])
+def decide_cv_suggestion(
+    suggestion_id: Annotated[int, Path(ge=1)],
+    payload: CvDecisionRequest,
+    account: CurrentAccount,
+    connection: Connection,
+) -> CvSuggestionOut:
+    """Accept, reject, edit or undo one suggestion. Nothing is applied yet."""
+
+    _check_cv_budget(connection, account.user_id)
+    item = cv_suggestions.decide(
+        connection,
+        user_id=account.user_id,
+        suggestion_id=suggestion_id,
+        status=payload.status,
+        edited_text=payload.edited_text,
+    )
+    return _cv_suggestion_out(item)
+
+
+@router.get("/cv/analyses/{run_id}/preview", response_model=CvPreviewOut, tags=["cv"])
+def preview_cv_analysis(
+    run_id: Annotated[int, Path(ge=1)],
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+) -> CvPreviewOut:
+    """What approving now would produce, with a line diff against the parent."""
+
+    response.headers["Cache-Control"] = "no-store"
+    run = cv_suggestions.get_run(connection, user_id=account.user_id, run_id=run_id)
+    parent = cv_service.get_version(connection, user_id=account.user_id, version_id=run.version_id)
+    sections = cv_suggestions.preview(connection, user_id=account.user_id, run_id=run_id)
+    return CvPreviewOut(
+        sections=_cv_sections_out(sections),
+        diff=_cv_diff_out(cv_suggestions.diff(parent.sections, sections)),
+        applied=sum(1 for item in run.suggestions if item.status in ("accepted", "edited")),
+    )
+
+
+@router.post("/cv/analyses/{run_id}/approve", response_model=CvApprovalOut, tags=["cv"])
+def approve_cv_analysis(
+    run_id: Annotated[int, Path(ge=1)], account: CurrentAccount, connection: Connection
+) -> CvApprovalOut:
+    """Explicitly approve the accepted changes as a version for this target."""
+
+    _check_cv_budget(connection, account.user_id)
+    version = cv_suggestions.approve(connection, user_id=account.user_id, run_id=run_id)
+    parent = cv_service.get_version(
+        connection, user_id=account.user_id, version_id=version.parent_version_id or 0
+    )
+    return CvApprovalOut(
+        version=_cv_version_out(version),
+        diff=_cv_diff_out(cv_suggestions.diff(parent.sections, version.sections)),
     )

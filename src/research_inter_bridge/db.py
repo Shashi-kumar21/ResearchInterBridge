@@ -613,6 +613,17 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=14,
+        name="cv_tailored_unique",
+        statements=(
+            # One tailored version per parent, target and content: a repeated or
+            # concurrent approval of the same choices reuses it (QA n2 on #46).
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_cv_versions_tailored_unique "
+            "ON cv_versions (parent_version_id, target_type, target_id, content_sha256) "
+            "WHERE kind = 'tailored'",
+        ),
+    ),
 )
 
 

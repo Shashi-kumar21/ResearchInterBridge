@@ -587,6 +587,15 @@ def approve(connection: sqlite3.Connection, *, user_id: int, run_id: int) -> cv.
         )
     sections = preview(connection, user_id=user_id, run_id=run_id)
     digest = cv.content_hash(sections)
+    parent = cv.get_version(connection, user_id=user_id, version_id=run.version_id)
+    if digest == parent.content_sha256:
+        # An accepted flag with no edit changes nothing; a copy identical to its
+        # parent would only add noise (QA n1 on #46).
+        raise CvError(
+            "the accepted suggestions do not change the CV; edit a flagged line or accept "
+            "a reorder or skill before approving.",
+            code="cv_nothing_changed",
+        )
     existing = connection.execute(
         "SELECT id FROM cv_versions WHERE user_id = ? AND parent_version_id = ? "
         "AND target_type = ? AND target_id = ? AND content_sha256 = ?",
@@ -600,7 +609,9 @@ def approve(connection: sqlite3.Connection, *, user_id: int, run_id: int) -> cv.
         cursor = connection.execute(
             "INSERT INTO cv_versions (user_id, document_id, kind, parent_version_id, "
             "target_type, target_id, sections_json, content_sha256, created_at, approved_at) "
-            "VALUES (?, ?, 'tailored', ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, 'tailored', ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (parent_version_id, target_type, target_id, content_sha256) "
+            "WHERE kind = 'tailored' DO NOTHING",
             (
                 user_id,
                 version.document_id,
@@ -613,6 +624,14 @@ def approve(connection: sqlite3.Connection, *, user_id: int, run_id: int) -> cv.
                 stamp,
             ),
         )
+        if cursor.rowcount == 0:
+            # A concurrent identical approval won; return its version.
+            row = connection.execute(
+                "SELECT id FROM cv_versions WHERE user_id = ? AND parent_version_id = ? "
+                "AND target_type = ? AND target_id = ? AND content_sha256 = ?",
+                (user_id, run.version_id, run.target_type, run.target_id, digest),
+            ).fetchone()
+            return cv.get_version(connection, user_id=user_id, version_id=int(row["id"]))
         new_id = int(cursor.lastrowid or 0)
         db.record_audit_event(
             connection,

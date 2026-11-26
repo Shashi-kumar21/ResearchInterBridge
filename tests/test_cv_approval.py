@@ -237,3 +237,34 @@ def test_a_decision_can_be_undone_before_approval(
         line for s in cs.preview(connection, user_id=user, run_id=run.id) for line in s.bullets
     ]
     assert "PyTorch" not in lines and "My own words" not in lines
+
+
+def test_a_concurrent_identical_approval_returns_the_winners_version(
+    connection: sqlite3.Connection, tmp_path: Path
+) -> None:
+    # QA n2 on #46: the partial unique index plus ON CONFLICT absorb a race.
+    user, run = run_for(connection, tmp_path)
+    cs.decide(
+        connection, user_id=user, suggestion_id=by_kind(run, "surface_skill").id, status="accepted"
+    )
+    winner = cs.approve(connection, user_id=user, run_id=run.id)
+    real_execute = connection.execute
+    hidden = {"done": False}
+
+    class Racing:
+        def __getattr__(self, name: str):
+            return getattr(connection, name)
+
+        def execute(self, sql: str, parameters=()):  # type: ignore[no-untyped-def]
+            if not hidden["done"] and sql.startswith("SELECT id FROM cv_versions WHERE user_id"):
+                hidden["done"] = True
+                return real_execute("SELECT id FROM cv_versions WHERE 0")
+            return real_execute(sql, parameters)
+
+    loser = cs.approve(Racing(), user_id=user, run_id=run.id)  # type: ignore[arg-type]
+
+    assert loser.id == winner.id
+    assert (
+        connection.execute("SELECT COUNT(*) FROM cv_versions WHERE kind = 'tailored'").fetchone()[0]
+        == 1
+    )
