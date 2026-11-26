@@ -285,7 +285,9 @@ def test_a_slow_provider_times_out_with_a_stable_code(
         )
 
     assert excinfo.value.code == "llm_unavailable"
-    assert connection.execute("SELECT COUNT(*) FROM llm_usage").fetchone()[0] == 0
+    # The provider may still bill a timed-out call: the estimate stays booked.
+    row = connection.execute("SELECT prompt_tokens, completion_tokens FROM llm_usage").fetchone()
+    assert row["prompt_tokens"] > 0 and row["completion_tokens"] == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -340,7 +342,16 @@ def test_years_grades_and_amounts_survive_redaction_and_vetting(line: str) -> No
 
 
 @pytest.mark.parametrize(
-    "phone", ["+49 151 2345 6789", "(555) 123-4567", "555.123.4567", "+1-202-555-0143"]
+    "phone",
+    [
+        "+49 151 2345 6789",
+        "(555) 123-4567",
+        "555.123.4567",
+        "+1-202-555-0143",
+        "98765 43210",
+        "9876543210",
+        "+91 98765 43210",
+    ],
 )
 def test_real_phone_numbers_are_still_removed(phone: str) -> None:
     assert llm.redact(f"Call me on {phone} please") == "Call me on [number removed] please"
@@ -435,3 +446,11 @@ def test_expired_cache_and_old_usage_are_pruned(
         == 0
     )
     assert connection.execute("SELECT COUNT(*) FROM llm_usage").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize(
+    "line", ["Scored 1234567890 points", "Batch of 5000000000 rows", "ID 12345 67890"]
+)
+def test_numbers_that_cannot_be_indian_mobiles_are_kept(line: str) -> None:
+    # A bare 10-digit run counts only when it starts with 6-9; other runs stay.
+    assert llm.redact(line) == line

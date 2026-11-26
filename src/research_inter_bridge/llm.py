@@ -46,7 +46,14 @@ MAX_GROWTH_CHARS = 120
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _URL_RE = re.compile(r"\b(?:https?://|www\.)\S+", re.I)
-_PHONE_RE = re.compile(r"(?<![\w+])(?:\+\d[\d ().-]{8,20}\d|\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4})(?!\w)")
+_PHONE_RE = re.compile(
+    r"(?<![\w+])(?:"
+    r"\+\d[\d ().-]{8,20}\d"  # international, with a leading +
+    r"|\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}"  # 3-3-4 grouping
+    r"|[6-9]\d{4}[ -]\d{5}"  # Indian mobile, 5-5 grouping (QA n1 on #49)
+    r"|[6-9]\d{9}"  # bare 10-digit Indian mobile
+    r")(?!\w)"
+)
 #: A phone number has 10 to 15 digits (E.164 allows at most 15).
 PHONE_DIGITS = range(10, 16)
 _NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
@@ -238,7 +245,11 @@ def rewrite_line(
     try:
         response = active.complete(request, timeout=settings.llm_timeout_seconds)
     except (LlmError, TimeoutError, OSError) as exc:
-        connection.execute("DELETE FROM llm_usage WHERE id = ?", (reservation,))
+        if not isinstance(exc, TimeoutError):
+            # The request never completed on the provider's side: free the booking.
+            connection.execute("DELETE FROM llm_usage WHERE id = ?", (reservation,))
+        # On a timeout the provider may still bill the call, so the reserved
+        # estimate stays counted against the caps (QA n2 on #49).
         logger.warning("llm call failed provider=%s purpose=%s", active.name, request.purpose)
         if isinstance(exc, LlmError):
             raise
