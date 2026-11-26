@@ -141,6 +141,9 @@ def analyse(
         else:
             run_id = int(cursor.lastrowid or 0)
             _insert_suggestions(connection, user_id, run_id, drafts, stamp)
+            _carry_over_and_prune(
+                connection, user_id, run_id, version_id, target_type, target_id, stamp
+            )
         db.record_audit_event(
             connection,
             actor=f"user:{user_id}",
@@ -170,6 +173,65 @@ def _insert_suggestions(
             "updated_at) VALUES (?, ?, ?, ?, ?, ?)",
             (run_id, user_id, position, draft["kind"], json.dumps(draft), stamp),
         )
+
+
+def _same_suggestion(a: dict[str, object], b: dict[str, object]) -> bool:
+    keys = ("kind", "section", "bullet", "before", "after")
+    return all(a.get(key) == b.get(key) for key in keys)
+
+
+def _carry_over_and_prune(
+    connection: sqlite3.Connection,
+    user_id: int,
+    run_id: int,
+    version_id: int,
+    target_type: str,
+    target_id: int,
+    stamp: str,
+) -> None:
+    """Keep the student's decisions on identical suggestions; drop older runs.
+
+    A new run for the same version and target (profile or target changed) would
+    otherwise reset every decision to pending (QA n2 on #45). Only identical
+    suggestions inherit a decision; changed ones start pending.
+    """
+
+    older = [
+        int(row["id"])
+        for row in connection.execute(
+            "SELECT id FROM cv_analysis_runs WHERE user_id = ? AND version_id = ? "
+            "AND target_type = ? AND target_id = ? AND id <> ? ORDER BY id DESC",
+            (user_id, version_id, target_type, target_id, run_id),
+        )
+    ]
+    if not older:
+        return
+    decided = [
+        (json.loads(row["payload_json"]), str(row["status"]), row["edited_text"])
+        for row in connection.execute(
+            "SELECT payload_json, status, edited_text FROM cv_suggestions "
+            "WHERE run_id = ? AND user_id = ? AND status <> 'pending'",
+            (older[0], user_id),
+        )
+    ]
+    for row in connection.execute(
+        "SELECT id, payload_json FROM cv_suggestions WHERE run_id = ? AND user_id = ?",
+        (run_id, user_id),
+    ).fetchall():
+        payload = json.loads(row["payload_json"])
+        for previous, status, edited in decided:
+            if _same_suggestion(payload, previous):
+                connection.execute(
+                    "UPDATE cv_suggestions SET status = ?, edited_text = ?, updated_at = ? "
+                    "WHERE id = ?",
+                    (status, edited, stamp, int(row["id"])),
+                )
+                break
+    placeholders = ", ".join("?" for _ in older)
+    connection.execute(
+        f"DELETE FROM cv_analysis_runs WHERE user_id = ? AND id IN ({placeholders})",  # noqa: S608
+        (user_id, *older),
+    )
 
 
 def export_payload(connection: sqlite3.Connection, user_id: int) -> list[dict[str, object]]:
@@ -265,6 +327,7 @@ def _suggest(
                 "bullet": None,
                 "before": [_label(sections[i]) for i in order],
                 "after": [_label(sections[i]) for i in new_order],
+                "order": new_order,
                 "reason": f"Put the sections closest to {target.name}'s work first.",
                 "evidence": [f"{target.name}: {term}" for term in matched[:8]],
             }
@@ -285,6 +348,7 @@ def _suggest(
                     "bullet": None,
                     "before": list(section.bullets),
                     "after": [section.bullets[i] for i in ranked_bullets],
+                    "order": ranked_bullets,
                     "reason": f"Lead '{_label(section)}' with the lines that match {target.name}.",
                     "evidence": [f"{target.name}: {term}" for term in matched[:8]],
                 }
@@ -437,3 +501,210 @@ def _row_to_suggestion(row: sqlite3.Row) -> Suggestion:
         status=str(row["status"]),
         edited_text=None if row["edited_text"] is None else str(row["edited_text"]),
     )
+
+
+# --------------------------------------------------------------------------- #
+# decisions and approval (Phase 7c)
+# --------------------------------------------------------------------------- #
+
+DECISIONS = frozenset({"accepted", "rejected", "edited", "pending"})
+#: Kinds whose text the student may replace with their own words.
+EDITABLE_KINDS = frozenset({"surface_skill", "flag_vague"})
+MAX_EDIT_LENGTH = 500
+
+
+def decide(
+    connection: sqlite3.Connection,
+    *,
+    user_id: int,
+    suggestion_id: int,
+    status: str,
+    edited_text: str | None = None,
+) -> Suggestion:
+    """Record the student's decision on one suggestion. Nothing is applied yet."""
+
+    if status not in DECISIONS:
+        raise CvError("status must be one of accepted, rejected, edited or pending.")
+    row = connection.execute(
+        "SELECT * FROM cv_suggestions WHERE id = ? AND user_id = ?", (suggestion_id, user_id)
+    ).fetchone()
+    if row is None:
+        raise CvError(
+            f"suggestion {suggestion_id} does not exist for this account.",
+            code="cv_suggestion_missing",
+        )
+    text: str | None = None
+    if status == "edited":
+        if str(row["kind"]) not in EDITABLE_KINDS:
+            raise CvError(
+                "only a skill or a flagged line can be edited; accept or reject a reorder."
+            )
+        text = " ".join((edited_text or "").split())
+        if not text:
+            raise CvError("edited_text is required when status is 'edited'.")
+        if len(text) > MAX_EDIT_LENGTH:
+            raise CvError(f"edited_text must be at most {MAX_EDIT_LENGTH} characters.")
+    elif edited_text is not None:
+        raise CvError("edited_text is only allowed when status is 'edited'.")
+    connection.execute(
+        "UPDATE cv_suggestions SET status = ?, edited_text = ?, updated_at = ? WHERE id = ?",
+        (status, text, db.utc_now(), suggestion_id),
+    )
+    return _row_to_suggestion(
+        connection.execute("SELECT * FROM cv_suggestions WHERE id = ?", (suggestion_id,)).fetchone()
+    )
+
+
+def preview(
+    connection: sqlite3.Connection, *, user_id: int, run_id: int
+) -> tuple[cv.CvSection, ...]:
+    """The tailored CV the accepted and edited suggestions would produce.
+
+    Pending and rejected suggestions are never applied: approval must not assume
+    a suggestion the student has not accepted (§3.7).
+    """
+
+    run = get_run(connection, user_id=user_id, run_id=run_id)
+    version = cv.get_version(connection, user_id=user_id, version_id=run.version_id)
+    rows = {
+        int(row["id"]): json.loads(row["payload_json"])
+        for row in connection.execute(
+            "SELECT id, payload_json FROM cv_suggestions WHERE run_id = ?", (run_id,)
+        )
+    }
+    return _apply(version.sections, run.suggestions, rows)
+
+
+def approve(connection: sqlite3.Connection, *, user_id: int, run_id: int) -> cv.CvVersion:
+    """Create the professor-specific version from accepted changes, on explicit request."""
+
+    run = get_run(connection, user_id=user_id, run_id=run_id)
+    applied = [s for s in run.suggestions if s.status in ("accepted", "edited")]
+    if not applied:
+        raise CvError(
+            "accept or edit at least one suggestion before approving a tailored CV.",
+            code="cv_nothing_accepted",
+        )
+    sections = preview(connection, user_id=user_id, run_id=run_id)
+    digest = cv.content_hash(sections)
+    existing = connection.execute(
+        "SELECT id FROM cv_versions WHERE user_id = ? AND parent_version_id = ? "
+        "AND target_type = ? AND target_id = ? AND content_sha256 = ?",
+        (user_id, run.version_id, run.target_type, run.target_id, digest),
+    ).fetchone()
+    if existing is not None:
+        return cv.get_version(connection, user_id=user_id, version_id=int(existing["id"]))
+    version = cv.get_version(connection, user_id=user_id, version_id=run.version_id)
+    stamp = db.utc_now()
+    with db.transaction(connection):
+        cursor = connection.execute(
+            "INSERT INTO cv_versions (user_id, document_id, kind, parent_version_id, "
+            "target_type, target_id, sections_json, content_sha256, created_at, approved_at) "
+            "VALUES (?, ?, 'tailored', ?, ?, ?, ?, ?, ?, ?)",
+            (
+                user_id,
+                version.document_id,
+                run.version_id,
+                run.target_type,
+                run.target_id,
+                json.dumps(cv.sections_payload(sections), ensure_ascii=False),
+                digest,
+                stamp,
+                stamp,
+            ),
+        )
+        new_id = int(cursor.lastrowid or 0)
+        db.record_audit_event(
+            connection,
+            actor=f"user:{user_id}",
+            action="cv.version_approved",
+            outcome="success",
+            target_type="cv_version",
+            target_id=str(new_id),
+            metadata={
+                "parent_version_id": run.version_id,
+                "target": f"{run.target_type}:{run.target_id}",
+                "applied": len(applied),
+            },
+        )
+    return cv.get_version(connection, user_id=user_id, version_id=new_id)
+
+
+def diff(before: Sequence[cv.CvSection], after: Sequence[cv.CvSection]) -> list[dict[str, object]]:
+    """A line diff between two versions, section headings included, for display."""
+
+    import difflib
+
+    def lines(sections: Sequence[cv.CvSection]) -> list[str]:
+        out: list[str] = []
+        for section in sections:
+            out.append(f"## {_label(section)}")
+            out.extend(section.bullets)
+        return out
+
+    old, new = lines(before), lines(after)
+    changes: list[dict[str, object]] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=old, b=new, autojunk=False).get_opcodes():
+        if tag == "equal":
+            changes.extend({"op": "same", "line": line} for line in old[i1:i2])
+            continue
+        changes.extend({"op": "removed", "line": line} for line in old[i1:i2])
+        changes.extend({"op": "added", "line": line} for line in new[j1:j2])
+    return changes
+
+
+def _apply(
+    sections: Sequence[cv.CvSection],
+    suggestions: Sequence[Suggestion],
+    payloads: dict[int, dict[str, object]],
+) -> tuple[cv.CvSection, ...]:
+    """Apply accepted/edited suggestions to the parent version, in a fixed order.
+
+    Line edits first, then bullet reorders, then surfaced skills, then the
+    section reorder, so every index still refers to the parent version.
+    """
+
+    bullets = [list(section.bullets) for section in sections]
+    chosen = [s for s in suggestions if s.status in ("accepted", "edited")]
+    for item in chosen:
+        if (
+            item.kind == "flag_vague"
+            and item.status == "edited"
+            and item.edited_text
+            and item.section is not None
+            and item.bullet is not None
+        ):
+            bullets[item.section][item.bullet] = item.edited_text
+    for item in chosen:
+        if item.kind == "reorder_bullets" and item.section is not None:
+            order = [int(i) for i in payloads[item.id].get("order", [])]
+            current = bullets[item.section]
+            if sorted(order) == list(range(len(current))):
+                bullets[item.section] = [current[i] for i in order]
+    added: list[str] = []
+    for item in chosen:
+        if item.kind == "surface_skill":
+            text = (
+                item.edited_text if item.status == "edited" and item.edited_text else item.after[0]
+            )
+            added.append(text)
+    result = [
+        cv.CvSection(kind=section.kind, heading=section.heading, bullets=tuple(lines))
+        for section, lines in zip(sections, bullets, strict=True)
+    ]
+    if added:
+        index = next((i for i, s in enumerate(result) if s.kind == "skills"), None)
+        if index is None:
+            result.append(cv.CvSection(kind="skills", heading="Skills", bullets=tuple(added)))
+        else:
+            skills = result[index]
+            result[index] = cv.CvSection(
+                kind=skills.kind, heading=skills.heading, bullets=(*skills.bullets, *added)
+            )
+    for item in chosen:
+        if item.kind == "reorder_sections":
+            order = [int(i) for i in payloads[item.id].get("order", [])]
+            if sorted(order) == list(range(len(sections))):
+                tail = result[len(sections) :]
+                result = [result[i] for i in order] + list(tail)
+    return tuple(result)
