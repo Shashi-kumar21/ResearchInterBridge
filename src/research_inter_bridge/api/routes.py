@@ -1332,7 +1332,12 @@ def _cv_sections_out(sections: Sequence[cv_service.CvSection]) -> list[CvSection
     ]
 
 
-def _cv_version_out(version: cv_service.CvVersion) -> CvVersionOut:
+def _cv_version_out(
+    version: cv_service.CvVersion, names: dict[tuple[str, int], str] | None = None
+) -> CvVersionOut:
+    name = None
+    if version.target_type is not None and version.target_id is not None:
+        name = (names or {}).get((version.target_type, version.target_id))
     return CvVersionOut(
         id=version.id,
         document_id=version.document_id,
@@ -1340,6 +1345,7 @@ def _cv_version_out(version: cv_service.CvVersion) -> CvVersionOut:
         parent_version_id=version.parent_version_id,
         target_type=version.target_type,  # type: ignore[arg-type]
         target_id=version.target_id,
+        target_name=name,
         sections=_cv_sections_out(version.sections),
         created_at=version.created_at,
         approved_at=version.approved_at,
@@ -1390,7 +1396,15 @@ def list_cv_versions(
 
     response.headers["Cache-Control"] = "no-store"
     versions = cv_service.list_versions(connection, user_id=account.user_id)
-    return CvVersionListOut(versions=[_cv_version_out(version) for version in versions])
+    names = cv_suggestions.target_names(
+        connection,
+        [
+            (version.target_type, version.target_id)
+            for version in versions
+            if version.target_type is not None and version.target_id is not None
+        ],
+    )
+    return CvVersionListOut(versions=[_cv_version_out(version, names) for version in versions])
 
 
 @router.post("/cv/originals", response_model=CvVersionOut, tags=["cv"])
@@ -1492,7 +1506,10 @@ def approve_cv_analysis(
     parent = cv_service.get_version(
         connection, user_id=account.user_id, version_id=version.parent_version_id or 0
     )
+    names = cv_suggestions.target_names(
+        connection, [(version.target_type or "", version.target_id or 0)]
+    )
     return CvApprovalOut(
-        version=_cv_version_out(version),
+        version=_cv_version_out(version, names),
         diff=_cv_diff_out(cv_suggestions.diff(parent.sections, version.sections)),
     )

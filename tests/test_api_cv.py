@@ -159,6 +159,9 @@ def test_the_full_flow_decides_previews_and_approves(
     assert version["parent_version_id"] == run["version_id"]
     assert version["approved_at"] is not None
     assert [v["kind"] for v in versions] == ["original", "tailored"]
+    assert versions[0]["target_name"] is None
+    assert versions[1]["target_name"] == "Jane Doe"
+    assert version["target_name"] == "Jane Doe"
     assert (
         versions[0]["sections"] == client.get("/api/cv/versions").json()["versions"][0]["sections"]
     )

@@ -815,6 +815,8 @@ export interface CvVersion {
   readonly parent_version_id: number | null;
   readonly target_type: MatchTargetType | null;
   readonly target_id: number | null;
+  /** The professor's or program's name for a tailored version. */
+  readonly target_name: string | null;
   readonly sections: readonly CvSection[];
   readonly created_at: string;
   readonly approved_at: string | null;

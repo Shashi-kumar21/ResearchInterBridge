@@ -461,6 +461,27 @@ def _load_target(
     return _Target("program", program.id, program.name, terms, program.last_checked_at)
 
 
+def target_names(
+    connection: sqlite3.Connection, targets: Sequence[tuple[str, int]]
+) -> dict[tuple[str, int], str]:
+    """Names for many targets in at most two batched reads (one per type)."""
+
+    names: dict[tuple[str, int], str] = {}
+    for kind, table, column in (
+        ("faculty", "faculty_members", "full_name"),
+        ("program", "programs", "name"),
+    ):
+        ids = sorted({target_id for target_type, target_id in targets if target_type == kind})
+        for batch in discovery._batches(ids):
+            placeholders = ", ".join("?" for _ in batch)
+            for row in connection.execute(
+                f"SELECT id, {column} AS name FROM {table} WHERE id IN ({placeholders})",  # noqa: S608
+                batch,
+            ):
+                names[(kind, int(row["id"]))] = str(row["name"])
+    return names
+
+
 def _target_name(connection: sqlite3.Connection, target_type: str, target_id: int) -> str:
     table, column = (
         ("faculty_members", "full_name") if target_type == "faculty" else ("programs", "name")

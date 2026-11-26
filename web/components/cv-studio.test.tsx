@@ -223,7 +223,7 @@ describe("CvStudio", () => {
     const user = userEvent.setup();
     render(<CvStudio />);
 
-    await user.click(await screen.findByRole("button", { name: "Use this CV" }));
+    await user.click(await screen.findByRole("button", { name: "Use asha-cv.pdf" }));
 
     expect(await screen.findByRole("link", { name: "Shortlist a professor or program" })).toHaveAttribute(
       "href",
@@ -284,26 +284,95 @@ describe("CvStudio", () => {
     });
   });
 
-  it("explains a 409 on approval and lists a successful approval", async () => {
+  it("enables approval only after an acceptance, explains a 409 and names the version", async () => {
     const state = ready({
       approve: () =>
-        json({ error: { code: "cv_nothing_accepted", message: "accept something" } }, 409),
+        json({ error: { code: "cv_nothing_changed", message: "nothing changes" } }, 409),
     });
     fetchMock.mockImplementation(router(state));
     const user = userEvent.setup();
     render(<CvStudio />);
     await openJane(user);
 
-    await user.click(screen.getByRole("button", { name: "Approve this version for Jane Doe" }));
-    expect(await screen.findByText("Accept or edit at least one suggestion before approving.")).toBeVisible();
+    // QA n2 on #48: nothing accepted, so approval is disabled with a hint.
+    expect(screen.getByRole("button", { name: "Approve this version for Jane Doe" })).toBeDisabled();
+    expect(screen.getByText("Accept or edit a suggestion to enable approval.")).toBeVisible();
 
-    state.approve = undefined;
-    await user.click(screen.getByRole("button", { name: "Accept Add a confirmed skill 1" }));
+    await user.click(screen.getByRole("button", { name: "Accept Line with no result 2" }));
     await screen.findByText(/1 change accepted/);
+    await user.click(screen.getByRole("button", { name: "Approve this version for Jane Doe" }));
+    expect(await screen.findByText(/do not change your CV/)).toBeVisible();
+
+    state.approve = () =>
+      json({
+        version: {
+          ...ORIGINAL,
+          id: 8,
+          kind: "tailored",
+          parent_version_id: 7,
+          target_type: "faculty",
+          target_id: 11,
+          target_name: "Jane Doe",
+          approved_at: "2026-11-26T10:05:00Z",
+        },
+        diff: [],
+      });
     await user.click(screen.getByRole("button", { name: "Approve this version for Jane Doe" }));
 
     expect(await screen.findByText(/Approved a CV version for Jane Doe/)).toBeVisible();
-    expect(screen.getByRole("heading", { name: /Version 8/ })).toBeVisible();
+    // QA n1 on #48: the version shows the target's name and can be viewed.
+    expect(screen.getByRole("heading", { name: "For Jane Doe" })).toBeVisible();
+    expect(screen.getByText("View this version")).toBeVisible();
+  });
+
+  it("lists every uploaded CV, defaults to the newest and can switch", async () => {
+    // QA B1 on #48: a newer upload must never be a dead end.
+    const older = { ...CV_DOC, id: 3, display_name: "old-cv.pdf", uploaded_at: "2026-10-01T10:00:00Z" };
+    const newer = { ...CV_DOC, id: 4, display_name: "new-cv.pdf", uploaded_at: "2026-11-25T10:00:00Z" };
+    const state = ready({ documents: [older, newer], versions: [ORIGINAL] });
+    const routeBase = router(state);
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/api/cv/originals")) {
+        const created = { ...ORIGINAL, id: 9, document_id: 4 };
+        state.versions = [ORIGINAL, created];
+        return Promise.resolve(json(created));
+      }
+      return routeBase(input, init);
+    });
+    const user = userEvent.setup();
+    render(<CvStudio />);
+
+    const list = await screen.findByRole("list", { name: "Your uploaded CVs" });
+    const items = within(list).getAllByRole("heading").map((heading) => heading.textContent);
+    expect(items).toEqual(["new-cv.pdf", "old-cv.pdf"]);
+    // The newest upload has no original yet, so it offers to prepare one.
+    await user.click(screen.getByRole("button", { name: "Use new-cv.pdf" }));
+
+    await waitFor(() =>
+      expect(calls().find((call) => call.url.endsWith("/api/cv/originals"))?.body).toEqual({
+        document_id: 4,
+      }),
+    );
+    expect(await screen.findByText("In use")).toBeVisible();
+    // The older CV, already prepared, can be chosen again without a request.
+    const before = calls().length;
+    await user.click(screen.getByRole("button", { name: "Use old-cv.pdf" }));
+    expect(calls().length).toBe(before);
+  });
+
+  it("keeps an unsaved edit by blocking a target switch", async () => {
+    // QA n3 on #48.
+    fetchMock.mockImplementation(router(ready()));
+    const user = userEvent.setup();
+    render(<CvStudio />);
+    await openJane(user);
+
+    await user.click(screen.getByRole("button", { name: "Edit Line with no result 2" }));
+
+    expect(screen.getByRole("button", { name: "Jane Doe" })).toBeDisabled();
+    expect(screen.getByText("Save or cancel your open edit before switching.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Jane Doe" })).toBeEnabled();
   });
 
   it("reloads the latest analysis when a suggestion was refreshed", async () => {

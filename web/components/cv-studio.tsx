@@ -76,11 +76,17 @@ interface SuggestionCardProps {
   readonly item: CvSuggestion;
   readonly busy: boolean;
   readonly onDecide: (item: CvSuggestion, status: CvSuggestionStatus, text?: string) => void;
+  /** Tells the studio an unsaved edit is open, so the target cannot switch (QA n3 on #48). */
+  readonly onEditingChange: (id: number, editing: boolean) => void;
 }
 
-function SuggestionCard({ item, busy, onDecide }: SuggestionCardProps) {
+function SuggestionCard({ item, busy, onDecide, onEditingChange }: SuggestionCardProps) {
   const editable = item.kind === "surface_skill" || item.kind === "flag_vague";
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditingState] = useState(false);
+  function setEditing(value: boolean): void {
+    setEditingState(value);
+    onEditingChange(item.id, value);
+  }
   const [draft, setDraft] = useState(item.edited_text ?? item.after[0] ?? "");
   const decided = item.status !== "pending";
   const showsMove = item.kind === "reorder_sections" || item.kind === "reorder_bullets";
@@ -221,6 +227,9 @@ export function CvStudio() {
   const [analysis, setAnalysis] = useState<CvAnalysis | null>(null);
   const [preview, setPreview] = useState<CvPreview | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  /** The CV document the student chose; ``null`` means "the newest upload". */
+  const [chosenDocument, setChosenDocument] = useState<number | null>(null);
+  const [openEdits, setOpenEdits] = useState<ReadonlySet<number>>(new Set());
   const requestId = useRef(0);
 
   useEffect(() => {
@@ -251,8 +260,28 @@ export function CvStudio() {
     };
   }, [reloadToken]);
 
-  const original = versions.find((version) => version.kind === "original") ?? null;
+  // One original per uploaded CV (QA B1 on #48). The newest upload is the
+  // default, and any CV can be chosen, so a newer CV is never a dead end.
+  const originals = new Map(
+    versions.filter((v) => v.kind === "original").map((v) => [v.document_id, v] as const),
+  );
+  const newestFirst = [...cvDocuments].sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at));
+  const selectedDocument =
+    newestFirst.find((document) => document.id === chosenDocument) ?? newestFirst[0] ?? null;
+  const original = selectedDocument ? (originals.get(selectedDocument.id) ?? null) : null;
   const tailored = versions.filter((version) => version.kind === "tailored");
+
+  function trackEdit(id: number, editing: boolean): void {
+    setOpenEdits((current) => {
+      const next = new Set(current);
+      if (editing) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+  }
 
   function fail(failure: unknown): void {
     if (isSessionLost(failure)) {
@@ -263,6 +292,9 @@ export function CvStudio() {
   }
 
   function prepareOriginal(document: DocumentRecord): void {
+    setChosenDocument(document.id);
+    setAnalysis(null);
+    setPreview(null);
     setBusy(true);
     setError(null);
     createCvOriginal(document.id)
@@ -372,30 +404,45 @@ export function CvStudio() {
 
       <section aria-labelledby="cv-source-title">
         <h2 id="cv-source-title">1. Your CV</h2>
-        {original ? (
-          <p className="hint">
-            Original prepared {formatDate(original.created_at)} with {original.sections.length} sections. It is
-            never edited; approved versions are saved separately.
-          </p>
-        ) : cvDocuments.length === 0 ? (
+        {cvDocuments.length === 0 ? (
           <p className="hint">
             No CV uploaded yet. <a href="/documents">Upload your CV</a> as a PDF, DOCX or TXT file first.
           </p>
         ) : (
-          <ul className="research-list" role="list">
-            {cvDocuments.map((document) => (
-              <li key={document.id} className="card">
-                <h3>{document.display_name}</h3>
-                <button
-                  type="button"
-                  className="button"
-                  disabled={busy}
-                  onClick={() => prepareOriginal(document)}
-                >
-                  Use this CV
-                </button>
-              </li>
-            ))}
+          <ul className="research-list" role="list" aria-label="Your uploaded CVs">
+            {newestFirst.map((document) => {
+              const prepared = originals.get(document.id);
+              const selected = selectedDocument?.id === document.id;
+              return (
+                <li key={document.id} className="card">
+                  <div className="card-head">
+                    <h3>{document.display_name}</h3>
+                    {selected ? <span className="badge badge-available">In use</span> : null}
+                  </div>
+                  <p className="hint">
+                    Uploaded {formatDate(document.uploaded_at)}
+                    {prepared
+                      ? ` · original prepared with ${prepared.sections.length} sections (never edited)`
+                      : " · not prepared yet"}
+                  </p>
+                  {selected && prepared ? null : (
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={busy || openEdits.size > 0}
+                      aria-label={`Use ${document.display_name}`}
+                      onClick={() =>
+                        prepared
+                          ? (setChosenDocument(document.id), setAnalysis(null), setPreview(null))
+                          : prepareOriginal(document)
+                      }
+                    >
+                      Use this CV
+                    </button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
@@ -403,6 +450,9 @@ export function CvStudio() {
       {original ? (
         <section aria-labelledby="cv-target-title">
           <h2 id="cv-target-title">2. Tailor it for</h2>
+          {openEdits.size > 0 ? (
+            <p className="hint">Save or cancel your open edit before switching.</p>
+          ) : null}
           {targets.length === 0 ? (
             <p className="hint">
               Your shortlist is empty. <a href="/matches">Shortlist a professor or program</a> first.
@@ -415,7 +465,7 @@ export function CvStudio() {
                   type="button"
                   className="button button-quiet"
                   aria-pressed={analysis?.target_id === entry.target_id && analysis?.target_type === entry.target_type}
-                  disabled={busy}
+                  disabled={busy || openEdits.size > 0}
                   onClick={() =>
                     openAnalysis(original.id, { type: entry.target_type, id: entry.target_id })
                   }
@@ -439,7 +489,13 @@ export function CvStudio() {
           ) : (
             <ul className="research-list" role="list">
               {analysis.suggestions.map((item) => (
-                <SuggestionCard key={item.id} item={item} busy={busy} onDecide={decide} />
+                <SuggestionCard
+                  key={item.id}
+                  item={item}
+                  busy={busy}
+                  onDecide={decide}
+                  onEditingChange={trackEdit}
+                />
               ))}
             </ul>
           )}
@@ -454,9 +510,17 @@ export function CvStudio() {
             not applied
           </p>
           <DiffView lines={preview.diff} />
-          <button type="button" className="button" disabled={busy} onClick={approve}>
+          <button
+            type="button"
+            className="button"
+            disabled={busy || preview.applied === 0}
+            onClick={approve}
+          >
             Approve this version for {analysis.target_name}
           </button>
+          {preview.applied === 0 ? (
+            <p className="hint">Accept or edit a suggestion to enable approval.</p>
+          ) : null}
         </section>
       ) : null}
 
@@ -468,10 +532,24 @@ export function CvStudio() {
           <ul className="research-list" role="list">
             {tailored.map((version) => (
               <li key={version.id} className="card">
-                <h3>
-                  Version {version.id} · {version.target_type === "faculty" ? "faculty" : "program"} {version.target_id}
-                </h3>
-                <p className="hint">Approved {formatDate(version.approved_at)}</p>
+                <h3>For {version.target_name ?? "a record no longer in the research cache"}</h3>
+                <p className="hint">
+                  {version.target_type === "faculty" ? "Professor" : "Program"} · approved{" "}
+                  {formatDate(version.approved_at)}
+                </p>
+                <details>
+                  <summary>View this version</summary>
+                  {version.sections.map((section, index) => (
+                    <div key={`${version.id}-${index}`}>
+                      {section.heading ? <h4>{section.heading}</h4> : null}
+                      <ul>
+                        {section.bullets.map((line, lineIndex) => (
+                          <li key={`${version.id}-${index}-${lineIndex}`}>{line}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </details>
               </li>
             ))}
           </ul>
