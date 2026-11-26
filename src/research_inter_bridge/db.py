@@ -591,8 +591,9 @@ MIGRATIONS: tuple[Migration, ...] = (
                 created_at TEXT NOT NULL
             )
             """,
-            "CREATE INDEX IF NOT EXISTS idx_cv_runs_lookup "
-            "ON cv_analysis_runs (user_id, version_id, target_type, target_id)",
+            # One run per identical input set: a repeat or a race reuses it.
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_cv_runs_inputs ON cv_analysis_runs "
+            "(user_id, version_id, target_type, target_id, inputs_fingerprint)",
             """
             CREATE TABLE IF NOT EXISTS cv_suggestions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

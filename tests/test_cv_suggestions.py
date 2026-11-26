@@ -300,3 +300,71 @@ def test_new_heading_aliases_keep_lines_out_of_skills() -> None:
 
     assert [s.kind for s in sections] == ["skills", "certifications", "references"]
     assert sections[0].bullets == ("Python",)
+
+
+def test_runs_and_suggestions_are_in_the_account_export(
+    connection: sqlite3.Connection, tmp_path: Path
+) -> None:
+    # QA B1 on #45: suggestions quote the student's CV lines.
+    from research_inter_bridge.auth import export_account_data
+
+    professor = seed_professor(connection)
+    user, version = setup(connection, tmp_path)
+    run = cs.analyse(
+        connection, user_id=user, version_id=version, target_type="faculty", target_id=professor
+    )
+
+    (exported,) = export_account_data(connection, user)["cv_analyses"]
+    assert exported["id"] == run.id
+    assert exported["target_id"] == professor
+    assert len(exported["suggestions"]) == len(run.suggestions)
+    lines = [line for item in exported["suggestions"] for line in item["before"]]
+    assert "Worked on data pipelines" in lines
+    profiles.delete_user(connection, user, actor="test")
+    assert connection.execute("SELECT COUNT(*) FROM cv_suggestions").fetchone()[0] == 0
+
+
+def test_a_long_section_does_not_win_by_length() -> None:
+    # QA n1 on #45: relevance counts distinct terms, not line hits.
+    terms = ("protein", "graph")
+    short = cv.CvSection("projects", "Projects", ("Protein graph model",))
+    long = cv.CvSection(
+        "experience", "Experience", tuple(f"protein lab shift {i}" for i in range(5))
+    )
+
+    assert cs._section_relevance(short, terms)[0] == 2.0
+    assert cs._section_relevance(long, terms)[0] == 1.0
+
+
+def test_an_identical_concurrent_run_is_reused_not_duplicated(
+    connection: sqlite3.Connection, tmp_path: Path
+) -> None:
+    # QA n3 on #45: the unique index plus ON CONFLICT absorb a race.
+    professor = seed_professor(connection)
+    user, version = setup(connection, tmp_path)
+    first = cs.analyse(
+        connection, user_id=user, version_id=version, target_type="faculty", target_id=professor
+    )
+    real_execute = connection.execute
+    hidden = {"done": False}
+
+    class Racing:
+        def __getattr__(self, name: str):
+            return getattr(connection, name)
+
+        def execute(self, sql: str, parameters=()):  # type: ignore[no-untyped-def]
+            if not hidden["done"] and sql.startswith("SELECT id FROM cv_analysis_runs"):
+                hidden["done"] = True
+                return real_execute("SELECT id FROM cv_analysis_runs WHERE 0")
+            return real_execute(sql, parameters)
+
+    again = cs.analyse(
+        Racing(),  # type: ignore[arg-type]
+        user_id=user,
+        version_id=version,
+        target_type="faculty",
+        target_id=professor,
+    )
+
+    assert again.id == first.id
+    assert connection.execute("SELECT COUNT(*) FROM cv_analysis_runs").fetchone()[0] == 1

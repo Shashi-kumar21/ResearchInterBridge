@@ -125,16 +125,22 @@ def analyse(
     with db.transaction(connection):
         cursor = connection.execute(
             "INSERT INTO cv_analysis_runs (user_id, version_id, target_type, target_id, "
-            "rules_version, inputs_fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "rules_version, inputs_fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (user_id, version_id, target_type, target_id, inputs_fingerprint) "
+            "DO NOTHING",
             (user_id, version_id, target_type, target_id, RULES_VERSION, fingerprint, stamp),
         )
-        run_id = int(cursor.lastrowid or 0)
-        for position, draft in enumerate(drafts):
-            connection.execute(
-                "INSERT INTO cv_suggestions (run_id, user_id, position, kind, payload_json, "
-                "updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (run_id, user_id, position, draft["kind"], json.dumps(draft), stamp),
-            )
+        if cursor.rowcount == 0:
+            # Lost a race with an identical request (QA n3 on #45): reuse its run.
+            row = connection.execute(
+                "SELECT id FROM cv_analysis_runs WHERE user_id = ? AND version_id = ? "
+                "AND target_type = ? AND target_id = ? AND inputs_fingerprint = ?",
+                (user_id, version_id, target_type, target_id, fingerprint),
+            ).fetchone()
+            run_id = int(row["id"])
+        else:
+            run_id = int(cursor.lastrowid or 0)
+            _insert_suggestions(connection, user_id, run_id, drafts, stamp)
         db.record_audit_event(
             connection,
             actor=f"user:{user_id}",
@@ -149,6 +155,59 @@ def analyse(
             },
         )
     return get_run(connection, user_id=user_id, run_id=run_id)
+
+
+def _insert_suggestions(
+    connection: sqlite3.Connection,
+    user_id: int,
+    run_id: int,
+    drafts: Sequence[dict[str, object]],
+    stamp: str,
+) -> None:
+    for position, draft in enumerate(drafts):
+        connection.execute(
+            "INSERT INTO cv_suggestions (run_id, user_id, position, kind, payload_json, "
+            "updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (run_id, user_id, position, draft["kind"], json.dumps(draft), stamp),
+        )
+
+
+def export_payload(connection: sqlite3.Connection, user_id: int) -> list[dict[str, object]]:
+    """Every analysis run and its suggestions, for the account export (QA B1 on #45).
+
+    Suggestions quote the student's own CV lines, so they are personal data.
+    """
+
+    runs: list[dict[str, object]] = []
+    for row in connection.execute(
+        "SELECT id FROM cv_analysis_runs WHERE user_id = ? ORDER BY id", (user_id,)
+    ).fetchall():
+        run = get_run(connection, user_id=user_id, run_id=int(row["id"]))
+        runs.append(
+            {
+                "id": run.id,
+                "version_id": run.version_id,
+                "target_type": run.target_type,
+                "target_id": run.target_id,
+                "rules_version": run.rules_version,
+                "created_at": run.created_at,
+                "suggestions": [
+                    {
+                        "kind": item.kind,
+                        "section": item.section,
+                        "bullet": item.bullet,
+                        "before": list(item.before),
+                        "after": list(item.after),
+                        "reason": item.reason,
+                        "evidence": list(item.evidence),
+                        "status": item.status,
+                        "edited_text": item.edited_text,
+                    }
+                    for item in run.suggestions
+                ],
+            }
+        )
+    return runs
 
 
 def get_run(connection: sqlite3.Connection, *, user_id: int, run_id: int) -> AnalysisRun:
@@ -303,13 +362,16 @@ def _line_match(line: str, terms: Sequence[str]) -> tuple[float, list[str]]:
 
 
 def _section_relevance(section: cv.CvSection, terms: Sequence[str]) -> tuple[float, list[str]]:
-    total = 0.0
-    matched: list[str] = []
+    """Distinct target terms a section matches.
+
+    Counting distinct terms, not hits per line, keeps a long section from
+    outranking a short, more relevant one by length alone (QA n1 on #45).
+    """
+
+    matched: set[str] = set()
     for bullet in section.bullets:
-        score, found = _line_match(bullet, terms)
-        total += score
-        matched.extend(found)
-    return total, matched
+        matched.update(_line_match(bullet, terms)[1])
+    return float(len(matched)), sorted(matched)
 
 
 def _label(section: cv.CvSection) -> str:
