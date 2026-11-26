@@ -6,6 +6,9 @@ Rules enforced here:
   bullet points once and stored as the *original* version. The database refuses
   any update to it (trigger in migration 12), and nothing in this module edits
   it, so the original is never silently modified.
+* **Recognised headings only.** A section starts only at a known heading
+  (``SECTION_ALIASES``); any other line, including an unknown heading, stays a
+  line of the current section, so nothing is lost or misfiled.
 * **Structured text.** Versions are stored as sections (canonical kind, heading
   as written, bullet lines). No file is rewritten; a PDF is rendered only when a
   later phase attaches an approved version (Owner, 2026-11-25).
@@ -83,12 +86,11 @@ def _heading_kind(line: str) -> str | None:
     if not cleaned or len(cleaned) > MAX_HEADING_LENGTH:
         return None
     key = " ".join(cleaned.casefold().split())
-    if key in _HEADING_LOOKUP:
-        return _HEADING_LOOKUP[key]
-    letters = [ch for ch in cleaned if ch.isalpha()]
-    if letters and all(ch.isupper() for ch in letters) and len(cleaned.split()) <= 4:
-        return "other"
-    return None
+    # Only recognised headings start a section. Guessing from capitals turned
+    # skill lines ("PYTHON, SQL") and names ("ASHA RAO") into headings (QA B1 on
+    # #44); an unknown heading now stays a line of the section above, so no
+    # text is ever lost or misfiled as a heading.
+    return _HEADING_LOOKUP.get(key)
 
 
 def split_sections(text: str) -> tuple[CvSection, ...]:
@@ -120,8 +122,16 @@ def split_sections(text: str) -> tuple[CvSection, ...]:
         else:
             bullets.append(line)
             continuing = False
+    for _, heading, bullets in sections:
+        if len(bullets) > MAX_BULLETS_PER_SECTION:
+            # Never truncate silently: dropping lines would change the CV (QA B2).
+            raise CvError(
+                f"the section {heading or 'before the first heading'!r} has more than "
+                f"{MAX_BULLETS_PER_SECTION} lines; check that the right file was uploaded "
+                "as the CV."
+            )
     result = tuple(
-        CvSection(kind=kind, heading=heading, bullets=tuple(bullets[:MAX_BULLETS_PER_SECTION]))
+        CvSection(kind=kind, heading=heading, bullets=tuple(bullets))
         for kind, heading, bullets in sections
         if bullets or heading is not None
     )
@@ -175,9 +185,12 @@ def create_original(
         raise CvError("no text could be read from this CV; upload a text-based PDF, DOCX or TXT.")
     stamp = db.utc_now()
     with db.transaction(connection):
+        # Two concurrent requests for the same document: the loser inserts
+        # nothing and reads the winner's row (QA n1 on #44).
         cursor = connection.execute(
             "INSERT INTO cv_versions (user_id, document_id, kind, sections_json, "
-            "content_sha256, created_at) VALUES (?, ?, 'original', ?, ?, ?)",
+            "content_sha256, created_at) VALUES (?, ?, 'original', ?, ?, ?) "
+            "ON CONFLICT (document_id) WHERE kind = 'original' DO NOTHING",
             (
                 user_id,
                 document_id,
@@ -186,6 +199,13 @@ def create_original(
                 stamp,
             ),
         )
+        if cursor.rowcount == 0:
+            row = connection.execute(
+                "SELECT * FROM cv_versions WHERE document_id = ? AND user_id = ? "
+                "AND kind = 'original'",
+                (document_id, user_id),
+            ).fetchone()
+            return _row_to_version(row)
         version_id = int(cursor.lastrowid or 0)
         db.record_audit_event(
             connection,

@@ -107,11 +107,28 @@ def test_every_source_word_survives_the_split() -> None:
     assert sorted(w for w in words_out if w) == sorted(w for w in words_in if w)
 
 
-def test_an_unknown_all_caps_heading_is_kept_as_other() -> None:
-    sections = cv.split_sections("HOBBIES\nChess\nskills used daily in my job as a barista")
+def test_capitalised_content_and_names_never_become_headings() -> None:
+    # QA B1 on #44.
+    lines = ["ASHA RAO", "SKILLS", "PYTHON, SQL, AWS", "C++", "Docker", "HOBBIES", "Chess"]
+    sections = cv.split_sections("\n".join(lines))
 
-    assert sections[0].kind == "other"
-    assert sections[0].bullets == ("Chess", "skills used daily in my job as a barista")
+    assert [(s.kind, s.heading) for s in sections] == [
+        ("preamble", None),
+        ("skills", "SKILLS"),
+    ]
+    assert sections[0].bullets == ("ASHA RAO",)
+    # An unknown heading stays a line of the section above; nothing is lost.
+    assert sections[1].bullets == ("PYTHON, SQL, AWS", "C++", "Docker", "HOBBIES", "Chess")
+
+
+def test_an_oversized_section_is_rejected_not_truncated() -> None:
+    # QA B2 on #44: silently keeping 200 of 250 lines would change the CV.
+    too_many = "\n".join(["Projects", *(f"- project {index}" for index in range(250))])
+    at_limit = "\n".join(["Projects", *(f"- p{index}" for index in range(200))])
+
+    with pytest.raises(CvError, match="more than 200 lines"):
+        cv.split_sections(too_many)
+    assert len(cv.split_sections(at_limit)[0].bullets) == 200
 
 
 # --------------------------------------------------------------------------- #
@@ -219,3 +236,41 @@ def test_an_empty_cv_is_rejected_with_a_reason(
         cv.create_original(
             connection, user_id=user, document_id=document_id, data_directory=tmp_path
         )
+
+
+def test_a_concurrent_duplicate_original_returns_the_existing_row(
+    connection: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # QA n1 on #44: the loser of a race reads the winner's row instead of
+    # failing on the unique index.
+    user = account(connection)
+    document_id = upload(connection, user, tmp_path)
+    winner = cv.create_original(
+        connection, user_id=user, document_id=document_id, data_directory=tmp_path
+    )
+    real_execute = connection.execute
+    first_lookup = {"done": False}
+
+    class RacingConnection:
+        """Hides the existing row from the first idempotency lookup only."""
+
+        def __getattr__(self, name: str):
+            return getattr(connection, name)
+
+        def execute(self, sql: str, parameters=()):  # type: ignore[no-untyped-def]
+            if not first_lookup["done"] and sql.startswith(
+                "SELECT * FROM cv_versions WHERE document_id"
+            ):
+                first_lookup["done"] = True
+                return real_execute("SELECT * FROM cv_versions WHERE 0")
+            return real_execute(sql, parameters)
+
+    loser = cv.create_original(
+        RacingConnection(),
+        user_id=user,
+        document_id=document_id,
+        data_directory=tmp_path,  # type: ignore[arg-type]
+    )
+
+    assert loser == winner
+    assert len(cv.list_versions(connection, user_id=user)) == 1
