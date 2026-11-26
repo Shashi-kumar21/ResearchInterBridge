@@ -815,3 +815,64 @@ main > section {
     grid-template-columns: 1fr;
   }
 }
+
+/* --- CV review (Phase 7d-2) ------------------------------------------------ */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.cv-before-after {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.cv-before-after ol {
+  margin: 0.25rem 0;
+  padding-left: 1.2rem;
+}
+
+.cv-diff {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 6px;
+}
+
+.cv-diff-mark {
+  display: inline-block;
+  width: 1.2em;
+}
+
+.cv-diff-added {
+  background: rgba(46, 160, 67, 0.15);
+}
+
+.cv-diff-removed {
+  background: rgba(248, 81, 73, 0.15);
+  text-decoration: line-through;
+}
+
+.cv-suggestion textarea {
+  width: 100%;
+  min-height: 4rem;
+}
+
+@media (max-width: 640px) {
+  .cv-before-after {
+    grid-template-columns: 1fr;
+  }
+}

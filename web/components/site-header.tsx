@@ -17,6 +17,7 @@ export function SiteHeader() {
         <Link href="/facts">Facts</Link>
         <Link href="/research">Research</Link>
         <Link href="/matches">Matches</Link>
+        <Link href="/cv">CV</Link>
         <Link href="/consent">Consent</Link>
         <Link href="/login">Sign in</Link>
         <Link href="/register">Create account</Link>

@@ -65,6 +65,17 @@ export function describeApiError(error: unknown): string {
     case "faculty_missing":
     case "program_missing":
       return "That record is no longer in the research cache. Reload the page.";
+    case "cv_nothing_accepted":
+      return "Accept or edit at least one suggestion before approving.";
+    case "cv_nothing_changed":
+      return "The accepted suggestions do not change your CV. Edit a flagged line, or accept a reorder or a skill, then approve.";
+    case "cv_suggestion_missing":
+      return "These suggestions were refreshed because your profile or the record changed. The latest ones are shown below.";
+    case "cv_version_missing":
+    case "cv_run_missing":
+      return "That CV version or analysis is no longer available. Reload the page.";
+    case "invalid_cv":
+      return error.message;
     case "invalid_matching":
       return "Matches could not be computed right now. The operator has been notified; try again later.";
     case "invalid_input":

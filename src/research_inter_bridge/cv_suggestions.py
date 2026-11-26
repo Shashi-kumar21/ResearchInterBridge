@@ -556,7 +556,11 @@ def decide(
 
 
 def preview(
-    connection: sqlite3.Connection, *, user_id: int, run_id: int
+    connection: sqlite3.Connection,
+    *,
+    user_id: int,
+    run_id: int,
+    run: AnalysisRun | None = None,
 ) -> tuple[cv.CvSection, ...]:
     """The tailored CV the accepted and edited suggestions would produce.
 
@@ -564,7 +568,8 @@ def preview(
     a suggestion the student has not accepted (§3.7).
     """
 
-    run = get_run(connection, user_id=user_id, run_id=run_id)
+    if run is None or run.id != run_id:
+        run = get_run(connection, user_id=user_id, run_id=run_id)
     version = cv.get_version(connection, user_id=user_id, version_id=run.version_id)
     rows = {
         int(row["id"]): json.loads(row["payload_json"])
@@ -585,7 +590,7 @@ def approve(connection: sqlite3.Connection, *, user_id: int, run_id: int) -> cv.
             "accept or edit at least one suggestion before approving a tailored CV.",
             code="cv_nothing_accepted",
         )
-    sections = preview(connection, user_id=user_id, run_id=run_id)
+    sections = preview(connection, user_id=user_id, run_id=run_id, run=run)
     digest = cv.content_hash(sections)
     parent = cv.get_version(connection, user_id=user_id, version_id=run.version_id)
     if digest == parent.content_sha256:

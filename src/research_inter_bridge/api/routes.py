@@ -1472,7 +1472,8 @@ def preview_cv_analysis(
     response.headers["Cache-Control"] = "no-store"
     run = cv_suggestions.get_run(connection, user_id=account.user_id, run_id=run_id)
     parent = cv_service.get_version(connection, user_id=account.user_id, version_id=run.version_id)
-    sections = cv_suggestions.preview(connection, user_id=account.user_id, run_id=run_id)
+    # The run is passed in so it is read once (QA n2 on #47).
+    sections = cv_suggestions.preview(connection, user_id=account.user_id, run_id=run_id, run=run)
     return CvPreviewOut(
         sections=_cv_sections_out(sections),
         diff=_cv_diff_out(cv_suggestions.diff(parent.sections, sections)),

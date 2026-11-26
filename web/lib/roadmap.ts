@@ -128,9 +128,12 @@ export const CAPABILITIES: readonly Capability[] = [
     id: "cv-review",
     title: "CV review per research group",
     detail:
-      "Suggestions tied to a specific professor, shown as a highlighted diff, " +
-      "kept as an approved version. The original upload is never modified.",
-    status: "planned",
+      "Rule-based suggestions tied to a specific professor or program, each with " +
+      "evidence: reorder your own sections and lines, add a skill you confirmed, " +
+      "or flag a line with no result. Accept, reject or reword each one, check " +
+      "the before-and-after, then approve a separate version. The original " +
+      "upload is never modified, and nothing is invented.",
+    status: "available",
     surface: "web",
   },
   {
