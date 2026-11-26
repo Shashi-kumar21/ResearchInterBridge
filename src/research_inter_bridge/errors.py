@@ -220,6 +220,14 @@ class CvVersionNotFoundError(CvError):
         super().__init__(message, code="cv_version_missing")
 
 
+class LlmError(ResearchInterBridgeError):
+    """An LLM request that cannot be served. ``code`` is stable for the API."""
+
+    def __init__(self, message: str, *, code: str = "llm_unavailable") -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class FacultyNotFoundError(DiscoveryError):
     """A faculty id that is not in the shared cache."""
 

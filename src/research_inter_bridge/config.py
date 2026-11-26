@@ -37,6 +37,10 @@ _COOKIE_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 _CONTACT_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
+#: Implemented LLM providers. ``off`` is the default and makes no call at all.
+LLM_PROVIDERS = frozenset({"off", "mock"})
+
+
 def _setting_name(key: str) -> str:
     return f"{ENV_PREFIX}{key.upper()}"
 
@@ -62,6 +66,15 @@ class Settings:
             ``From`` header when a live research source is fetched. ``None``
             means live source access is unavailable; parsing and offline
             browsing still work.
+        llm_provider: ``off`` (the default) or ``mock``. Real providers are
+            added only after the Owner picks one (ADR-025); until then nothing
+            can call out.
+        llm_model: Model name for the provider, when one is enabled.
+        llm_api_key: Secret read only from the environment. Excluded from
+            ``repr`` so it can never reach a log line or an error message.
+        llm_timeout_seconds: Per-call timeout.
+        llm_daily_tokens_per_user / llm_daily_tokens_total: Cost caps over
+            a rolling 24 hours.
     """
 
     database_path: Path = DEFAULT_DATABASE_PATH
@@ -73,6 +86,12 @@ class Settings:
     cookie_secure: bool = False
     session_cookie_name: str = DEFAULT_SESSION_COOKIE_NAME
     research_contact_email: str | None = None
+    llm_provider: str = "off"
+    llm_model: str | None = None
+    llm_api_key: str | None = field(default=None, repr=False)
+    llm_timeout_seconds: float = 20.0
+    llm_daily_tokens_per_user: int = 20_000
+    llm_daily_tokens_total: int = 200_000
 
     def __post_init__(self) -> None:
         if self.log_level not in LOG_LEVELS:
@@ -99,6 +118,17 @@ class Settings:
                 f"(for example research@example.org), got {contact!r}."
             )
         object.__setattr__(self, "research_contact_email", contact)
+        if self.llm_provider not in LLM_PROVIDERS:
+            allowed = ", ".join(sorted(LLM_PROVIDERS))
+            raise ConfigError(
+                f"{_setting_name('llm_provider')} must be one of {allowed}; got "
+                f"{self.llm_provider!r}. Real providers are added after the Owner picks one."
+            )
+        if self.llm_timeout_seconds <= 0:
+            raise ConfigError(f"{_setting_name('llm_timeout_seconds')} must be greater than 0.")
+        for name in ("llm_daily_tokens_per_user", "llm_daily_tokens_total"):
+            if getattr(self, name) < 0:
+                raise ConfigError(f"{_setting_name(name)} must be zero or more.")
         # Scheme and host are case-insensitive (RFC 3986 §3.2.2, RFC 7230 §2.7),
         # but a browser sends the origin in lowercase. Normalising here means the
         # guard compares like with like instead of rejecting a valid request just
@@ -136,6 +166,12 @@ class Settings:
                 source, "SESSION_COOKIE_NAME", DEFAULT_SESSION_COOKIE_NAME
             ),
             research_contact_email=_read_raw(source, "RESEARCH_CONTACT_EMAIL"),
+            llm_provider=_read_text(source, "LLM_PROVIDER", "off").lower(),
+            llm_model=_read_raw(source, "LLM_MODEL"),
+            llm_api_key=_read_raw(source, "LLM_API_KEY"),
+            llm_timeout_seconds=_read_float(source, "LLM_TIMEOUT_SECONDS", 20.0),
+            llm_daily_tokens_per_user=int(_read_float(source, "LLM_DAILY_TOKENS_PER_USER", 20_000)),
+            llm_daily_tokens_total=int(_read_float(source, "LLM_DAILY_TOKENS_TOTAL", 200_000)),
         )
 
 

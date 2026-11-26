@@ -391,6 +391,8 @@ describe("CvStudio", () => {
 
     expect(await screen.findByRole("button", { name: "Accept Add a confirmed skill 9" })).toBeVisible();
     expect(screen.getByText(/These suggestions were refreshed/)).toBeVisible();
+    // Nothing from the old run keeps switching disabled.
+    expect(screen.getByRole("button", { name: "Jane Doe" })).toBeEnabled();
   });
 
   it("never polls after loading", async () => {

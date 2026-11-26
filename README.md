@@ -369,6 +369,7 @@ src/research_inter_bridge/    Python package
   result_reuse.py             k>=3 cross-user reuse of candidate id sets, audited
   cv.py                       CV sections and versions; the original is immutable
   cv_suggestions.py           rule-based, professor-specific CV suggestions with evidence
+  llm.py                      optional LLM layer (off by default): mock, guards, caps, cache
   http_source.py              polite contact-bearing HTTP GET boundary (ADR-017)
   program_pages.py            explicit schema.org JSON-LD program parser
   api/                        FastAPI app: sessions, CORS, consent and account routes

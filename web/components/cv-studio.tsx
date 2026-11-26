@@ -317,6 +317,9 @@ export function CvStudio() {
         }
         setAnalysis(run);
         setPreview(nextPreview);
+        // Cards from the previous analysis are gone; their open edits must not
+        // keep switching disabled (QA nit on #48).
+        setOpenEdits(new Set());
       })
       .catch(fail)
       .finally(() => {
