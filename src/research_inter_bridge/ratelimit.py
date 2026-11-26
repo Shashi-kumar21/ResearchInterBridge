@@ -73,6 +73,11 @@ LOGIN_RULE = RateLimitRule(name="auth.login", limit=120, window_seconds=900)
 MATCH_RULE = RateLimitRule(name="match.score", limit=60, window_seconds=300)
 
 
+#: CV writes (create an original, analyse, decide, approve), per account. A
+#: student reviewing suggestions one by one stays far below 120 per 5 minutes.
+CV_RULE = RateLimitRule(name="cv.write", limit=120, window_seconds=300)
+
+
 def user_subject(user_id: int) -> str:
     """The rate-limit client key for a signed-in account."""
 

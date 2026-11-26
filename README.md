@@ -215,6 +215,13 @@ if the database cannot be opened.
 | `POST` | `/api/shortlist/exclude` | cookie | hide targets from this student's matches |
 | `POST` | `/api/shortlist/refresh` | cookie | re-score shortlisted targets; a snapshot is stored only where it changed |
 | `DELETE` | `/api/shortlist/{type}/{id}` | cookie | forget one row; `404 shortlist_item_missing` |
+| `GET` | `/api/cv/versions` | cookie | the student's CV versions (immutable originals and approved tailored ones) |
+| `POST` | `/api/cv/originals` | cookie | split an uploaded CV document into its original version `{document_id}` (idempotent) |
+| `POST` | `/api/cv/analyses` | cookie | rule-based suggestions for `{version_id, target_type, target_id}`, each with evidence; reused when inputs are unchanged |
+| `GET` | `/api/cv/analyses/{id}` | cookie | one analysis with its suggestions and their status |
+| `PATCH` | `/api/cv/suggestions/{id}` | cookie | `{status: accepted|rejected|edited|pending, edited_text?}`; nothing is applied until approval |
+| `GET` | `/api/cv/analyses/{id}/preview` | cookie | the tailored sections the accepted changes would produce, with a line diff |
+| `POST` | `/api/cv/analyses/{id}/approve` | cookie | explicit approval: creates the tailored version; `409 cv_nothing_accepted` or `cv_nothing_changed` |
 
 Every failure has the same shape, `{"error": {"code", "message"}}`, with stable
 codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
@@ -224,7 +231,9 @@ codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
 `document_too_large` (413), `unsupported_document` (415),
 `document_unreadable` (422), `program_missing` (404), `faculty_missing` (404),
 `invalid_shortlist` (400), `shortlist_full` (409), `shortlist_item_missing` (404),
-`invalid_matching` (500, logged), `institution_missing`
+`invalid_matching` (500, logged),
+`invalid_cv` (400), `cv_version_missing`/`cv_run_missing`/`cv_suggestion_missing` (404),
+`cv_nothing_accepted`/`cv_nothing_changed` (409), `institution_missing`
 (404) and `discovery_unavailable` (503). A rejected request body never echoes
 its values, so a bad password is not reflected back or written to the caller's
 logs.

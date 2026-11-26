@@ -512,3 +512,91 @@ class ShortlistEntryOut(BaseModel):
 
 class ShortlistListOut(BaseModel):
     items: list[ShortlistEntryOut]
+
+
+# --------------------------------------------------------------------------- #
+# CV versions and suggestions (Phase 7, ADR-024)
+# --------------------------------------------------------------------------- #
+
+
+class CvSectionOut(BaseModel):
+    kind: str
+    heading: str | None
+    bullets: list[str]
+
+
+class CvVersionOut(BaseModel):
+    """A CV version. ``original`` is immutable; ``tailored`` exists only after approval."""
+
+    id: int
+    document_id: int
+    kind: Literal["original", "tailored"]
+    parent_version_id: int | None
+    target_type: Literal["faculty", "program"] | None
+    target_id: int | None
+    sections: list[CvSectionOut]
+    created_at: str
+    approved_at: str | None
+
+
+class CvVersionListOut(BaseModel):
+    versions: list[CvVersionOut]
+
+
+class CvOriginalRequest(_StrictModel):
+    document_id: int = Field(ge=1)
+
+
+class CvAnalysisRequest(_StrictModel):
+    version_id: int = Field(ge=1)
+    target_type: Literal["faculty", "program"]
+    target_id: int = Field(ge=1)
+
+
+class CvSuggestionOut(BaseModel):
+    """A pending or decided suggestion. ``after`` reuses only the student's content."""
+
+    id: int
+    kind: Literal["reorder_sections", "reorder_bullets", "surface_skill", "flag_vague"]
+    section: int | None
+    bullet: int | None
+    before: list[str]
+    after: list[str]
+    reason: str
+    evidence: list[str]
+    status: Literal["pending", "accepted", "rejected", "edited"]
+    edited_text: str | None
+
+
+class CvAnalysisOut(BaseModel):
+    id: int
+    version_id: int
+    target_type: Literal["faculty", "program"]
+    target_id: int
+    target_name: str
+    rules_version: str
+    created_at: str
+    suggestions: list[CvSuggestionOut]
+
+
+class CvDecisionRequest(_StrictModel):
+    status: Literal["pending", "accepted", "rejected", "edited"]
+    edited_text: str | None = Field(default=None, max_length=500)
+
+
+class CvDiffLineOut(BaseModel):
+    op: Literal["same", "added", "removed"]
+    line: str
+
+
+class CvPreviewOut(BaseModel):
+    """What approving now would produce, as sections and a line diff vs the parent."""
+
+    sections: list[CvSectionOut]
+    diff: list[CvDiffLineOut]
+    applied: int
+
+
+class CvApprovalOut(BaseModel):
+    version: CvVersionOut
+    diff: list[CvDiffLineOut]
