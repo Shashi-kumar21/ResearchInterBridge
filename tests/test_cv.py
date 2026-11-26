@@ -109,7 +109,7 @@ def test_every_source_word_survives_the_split() -> None:
 
 def test_capitalised_content_and_names_never_become_headings() -> None:
     # QA B1 on #44.
-    lines = ["ASHA RAO", "SKILLS", "PYTHON, SQL, AWS", "C++", "Docker", "HOBBIES", "Chess"]
+    lines = ["ASHA RAO", "SKILLS", "PYTHON, SQL, AWS", "C++", "Docker", "MISC", "Chess"]
     sections = cv.split_sections("\n".join(lines))
 
     assert [(s.kind, s.heading) for s in sections] == [
@@ -118,7 +118,7 @@ def test_capitalised_content_and_names_never_become_headings() -> None:
     ]
     assert sections[0].bullets == ("ASHA RAO",)
     # An unknown heading stays a line of the section above; nothing is lost.
-    assert sections[1].bullets == ("PYTHON, SQL, AWS", "C++", "Docker", "HOBBIES", "Chess")
+    assert sections[1].bullets == ("PYTHON, SQL, AWS", "C++", "Docker", "MISC", "Chess")
 
 
 def test_an_oversized_section_is_rejected_not_truncated() -> None:

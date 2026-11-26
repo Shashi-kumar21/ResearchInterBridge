@@ -572,6 +572,46 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=13,
+        name="cv_suggestions",
+        statements=(
+            # task.md §3.7 / ADR-024. Per-user. A run is one rule pass of one CV
+            # version against one target; each suggestion stays pending until
+            # the student accepts, rejects or edits it (Phase 7c).
+            """
+            CREATE TABLE IF NOT EXISTS cv_analysis_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                version_id INTEGER NOT NULL REFERENCES cv_versions (id) ON DELETE CASCADE,
+                target_type TEXT NOT NULL CHECK (target_type IN ('faculty', 'program')),
+                target_id INTEGER NOT NULL CHECK (target_id > 0),
+                rules_version TEXT NOT NULL,
+                inputs_fingerprint TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_cv_runs_lookup "
+            "ON cv_analysis_runs (user_id, version_id, target_type, target_id)",
+            """
+            CREATE TABLE IF NOT EXISTS cv_suggestions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL REFERENCES cv_analysis_runs (id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                kind TEXT NOT NULL CHECK (
+                    kind IN ('reorder_sections', 'reorder_bullets', 'surface_skill', 'flag_vague')
+                ),
+                payload_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'accepted', 'rejected', 'edited')),
+                edited_text TEXT,
+                updated_at TEXT NOT NULL,
+                UNIQUE (run_id, position)
+            )
+            """,
+        ),
+    ),
 )
 
 

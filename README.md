@@ -359,6 +359,7 @@ src/research_inter_bridge/    Python package
   taxonomy.py                 OECD Fields of Science map for reuse buckets
   result_reuse.py             k>=3 cross-user reuse of candidate id sets, audited
   cv.py                       CV sections and versions; the original is immutable
+  cv_suggestions.py           rule-based, professor-specific CV suggestions with evidence
   http_source.py              polite contact-bearing HTTP GET boundary (ADR-017)
   program_pages.py            explicit schema.org JSON-LD program parser
   api/                        FastAPI app: sessions, CORS, consent and account routes
