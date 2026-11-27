@@ -602,3 +602,84 @@ class CvPreviewOut(BaseModel):
 class CvApprovalOut(BaseModel):
     version: CvVersionOut
     diff: list[CvDiffLineOut]
+
+
+# --------------------------------------------------------------------------- #
+# email drafts (Phase 8, ADR-026)
+# --------------------------------------------------------------------------- #
+
+
+class DraftCreateRequest(_StrictModel):
+    faculty_id: int = Field(ge=1)
+    cv_version_id: int | None = Field(default=None, ge=1)
+
+
+class DraftEditRequest(_StrictModel):
+    subject: str = Field(max_length=200)
+    body: str = Field(max_length=10_000)
+
+
+class DraftApproveRequest(_StrictModel):
+    """The version number the student reviewed; approval fails if it changed."""
+
+    version_no: int = Field(ge=1)
+
+
+class LintFindingOut(BaseModel):
+    code: str
+    level: Literal["block", "warn"]
+    message: str
+
+
+class DraftEvidenceOut(BaseModel):
+    claim: str
+    source: str
+
+
+class DraftVersionOut(BaseModel):
+    version_no: int
+    source: Literal["generated", "edited"]
+    subject: str
+    body: str
+    recipient: str | None
+    cv_version_id: int | None
+    evidence: list[DraftEvidenceOut]
+    flags: list[str]
+    created_at: str
+
+
+class DraftApprovalOut(BaseModel):
+    version_no: int
+    content_sha256: str
+    approved_at: str
+
+
+class DraftOut(BaseModel):
+    """A draft with its current version, history and live lint. Text is plain."""
+
+    id: int
+    target_type: Literal["faculty"]
+    target_id: int
+    target_name: str
+    current: DraftVersionOut
+    history: list[DraftVersionOut]
+    lint: list[LintFindingOut]
+    approval: DraftApprovalOut | None
+    created_at: str
+    updated_at: str
+
+
+class DraftSummaryOut(BaseModel):
+    id: int
+    target_id: int
+    target_name: str
+    subject: str
+    version_no: int
+    recipient: str | None
+    flag_count: int
+    approved: bool
+    updated_at: str
+
+
+class DraftListOut(BaseModel):
+    drafts: list[DraftSummaryOut]

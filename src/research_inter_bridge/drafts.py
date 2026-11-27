@@ -29,7 +29,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
-from . import cv, db, lint, profiles
+from . import cv, db, discovery, lint, profiles
 from . import faculty as faculty_service
 from .cv_suggestions import _line_match
 from .errors import CvVersionNotFoundError, DraftError
@@ -73,6 +73,28 @@ class DraftVersion:
 
 
 @dataclass(frozen=True, slots=True)
+class Approval:
+    version_no: int
+    content_sha256: str
+    approved_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class DraftSummary:
+    """One list row: the current version only, no history (QA n2 on #51)."""
+
+    id: int
+    target_id: int
+    target_name: str
+    subject: str
+    version_no: int
+    recipient: str | None
+    flag_count: int
+    approved: bool
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class Draft:
     id: int
     target_type: str
@@ -83,6 +105,8 @@ class Draft:
     current: DraftVersion
     #: Newest first, at most :data:`MAX_VERSIONS`.
     history: tuple[DraftVersion, ...]
+    #: Present only while it still matches the current content exactly.
+    approval: Approval | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -178,6 +202,7 @@ def get_draft(connection: sqlite3.Connection, *, user_id: int, draft_id: int) ->
     name_row = connection.execute(
         "SELECT full_name FROM faculty_members WHERE id = ?", (int(row["target_id"]),)
     ).fetchone()
+    current = versions[0]
     return Draft(
         id=int(row["id"]),
         target_type=str(row["target_type"]),
@@ -185,9 +210,63 @@ def get_draft(connection: sqlite3.Connection, *, user_id: int, draft_id: int) ->
         target_name="a professor no longer in the cache" if name_row is None else str(name_row[0]),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
-        current=versions[0],
+        current=current,
         history=versions,
+        approval=_valid_approval(connection, int(row["id"]), current),
     )
+
+
+def summaries(connection: sqlite3.Connection, *, user_id: int) -> tuple[DraftSummary, ...]:
+    """List rows from one query over current versions plus one batched name read.
+
+    Replaces per-draft loading for the list route (QA n2 on #51): no history,
+    no evidence, no N+1.
+    """
+
+    rows = connection.execute(
+        "SELECT d.id, d.target_id, d.updated_at, v.id AS version_id, v.version_no, v.subject, "
+        "v.recipient, v.cv_version_id, v.body, v.flags_json, v.content_sha256, "
+        "a.draft_version_id AS approved_version, a.content_sha256 AS approved_hash "
+        "FROM email_drafts AS d "
+        "JOIN draft_versions AS v ON v.draft_id = d.id AND v.version_no = "
+        "(SELECT MAX(version_no) FROM draft_versions WHERE draft_id = d.id) "
+        "LEFT JOIN email_approvals AS a ON a.draft_id = d.id "
+        "WHERE d.user_id = ? ORDER BY d.updated_at DESC, d.id DESC",
+        (user_id,),
+    ).fetchall()
+    names: dict[int, str] = {}
+    ids = sorted({int(row["target_id"]) for row in rows})
+    for batch in discovery._batches(ids):
+        placeholders = ", ".join("?" for _ in batch)
+        for name_row in connection.execute(
+            f"SELECT id, full_name FROM faculty_members WHERE id IN ({placeholders})",  # noqa: S608
+            batch,
+        ):
+            names[int(name_row["id"])] = str(name_row["full_name"])
+    result: list[DraftSummary] = []
+    for row in rows:
+        live_hash = content_hash(
+            str(row["subject"]), str(row["body"]), row["recipient"], row["cv_version_id"]
+        )
+        approved = (
+            row["approved_version"] is not None
+            and int(row["approved_version"]) == int(row["version_id"])
+            and row["approved_hash"] == live_hash
+        )
+        result.append(
+            DraftSummary(
+                id=int(row["id"]),
+                target_id=int(row["target_id"]),
+                target_name=names.get(int(row["target_id"]), "a professor no longer in the cache"),
+                subject=str(row["subject"]),
+                version_no=int(row["version_no"]),
+                recipient=None if row["recipient"] is None else str(row["recipient"]),
+                flag_count=len(json.loads(row["flags_json"])),
+                approved=approved,
+                updated_at=str(row["updated_at"]),
+            )
+        )
+    return tuple(result)
 
 
 def list_drafts(connection: sqlite3.Connection, *, user_id: int) -> tuple[Draft, ...]:
@@ -226,6 +305,13 @@ def export_payload(connection: sqlite3.Connection, user_id: int) -> list[dict[st
             "id": draft.id,
             "target_type": draft.target_type,
             "target_id": draft.target_id,
+            "approval": None
+            if draft.approval is None
+            else {
+                "version_no": draft.approval.version_no,
+                "content_sha256": draft.approval.content_sha256,
+                "approved_at": draft.approval.approved_at,
+            },
             "versions": [
                 {
                     "version_no": version.version_no,
@@ -590,3 +676,123 @@ def lint_draft(
             references=references(version),
         )
     )
+
+
+# --------------------------------------------------------------------------- #
+# approval (Phase 8c)
+# --------------------------------------------------------------------------- #
+
+
+def live_content_hash(version: DraftVersion) -> str:
+    """Recomputed from the row as it is now, never trusted from storage.
+
+    ``cv_version_id`` may have become NULL when a CV version was deleted, so
+    the stored ``content_sha256`` can be stale (QA n3 on #51).
+    """
+
+    return content_hash(version.subject, version.body, version.recipient, version.cv_version_id)
+
+
+def _valid_approval(
+    connection: sqlite3.Connection, draft_id: int, current: DraftVersion
+) -> Approval | None:
+    row = connection.execute(
+        "SELECT draft_version_id, content_sha256, approved_at FROM email_approvals "
+        "WHERE draft_id = ?",
+        (draft_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    if int(row["draft_version_id"]) != current.id or row["content_sha256"] != live_content_hash(
+        current
+    ):
+        return None
+    return Approval(
+        version_no=current.version_no,
+        content_sha256=str(row["content_sha256"]),
+        approved_at=str(row["approved_at"]),
+    )
+
+
+def approve(
+    connection: sqlite3.Connection,
+    *,
+    user_id: int,
+    draft_id: int,
+    version_no: int,
+    now: datetime | None = None,
+) -> Draft:
+    """Approve the exact version the student reviewed, after every check passes.
+
+    * ``version_no`` must still be the current version (``draft_changed``);
+    * the recipient must still be the professor's verified, current address
+      (``draft_recipient_unverified``);
+    * no lint finding may be blocking (``draft_lint_blocked``).
+
+    The approval stores the content hash recomputed from the current row. Any
+    later change clears it in the database (migration 17 triggers).
+    """
+
+    moment = now or datetime.now(UTC)
+    draft = get_draft(connection, user_id=user_id, draft_id=draft_id)
+    current = draft.current
+    if current.version_no != version_no:
+        raise DraftError(
+            f"the draft changed since you reviewed it (now version {current.version_no}); "
+            "review the latest text before approving.",
+            code="draft_changed",
+        )
+    member = faculty_service.get_faculty(connection, draft.target_id, now=moment)
+    verified = faculty_service.public_email(member) if member.contact_sendable else None
+    if current.recipient is None or verified != current.recipient:
+        raise DraftError(
+            "the professor's email is no longer verified and current; regenerate the draft "
+            "after it is verified again.",
+            code="draft_recipient_unverified",
+        )
+    blocked = lint.blocking(lint_draft(connection, user_id=user_id, draft_id=draft_id))
+    if blocked:
+        raise DraftError(
+            "fix these before approving: " + ", ".join(f.code for f in blocked) + ".",
+            code="draft_lint_blocked",
+        )
+    digest = live_content_hash(current)
+    with db.transaction(connection):
+        connection.execute(
+            "INSERT INTO email_approvals (draft_id, user_id, draft_version_id, content_sha256, "
+            "approved_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (draft_id) DO UPDATE SET "
+            "draft_version_id = excluded.draft_version_id, "
+            "content_sha256 = excluded.content_sha256, approved_at = excluded.approved_at",
+            (draft_id, user_id, current.id, digest, moment.isoformat()),
+        )
+        db.record_audit_event(
+            connection,
+            actor=f"user:{user_id}",
+            action="draft.approved",
+            outcome="success",
+            target_type="email_draft",
+            target_id=str(draft_id),
+            metadata={"version_no": current.version_no, "content_sha256": digest},
+        )
+    return get_draft(connection, user_id=user_id, draft_id=draft_id)
+
+
+def withdraw_approval(connection: sqlite3.Connection, *, user_id: int, draft_id: int) -> Draft:
+    """Undo an approval before anything is sent. A no-op when none exists."""
+
+    get_draft(connection, user_id=user_id, draft_id=draft_id)
+    with db.transaction(connection):
+        cursor = connection.execute(
+            "DELETE FROM email_approvals WHERE draft_id = ? AND user_id = ?", (draft_id, user_id)
+        )
+        if cursor.rowcount:
+            db.record_audit_event(
+                connection,
+                actor=f"user:{user_id}",
+                action="draft.approval_withdrawn",
+                outcome="success",
+                target_type="email_draft",
+                target_id=str(draft_id),
+                metadata={},
+            )
+    return get_draft(connection, user_id=user_id, draft_id=draft_id)

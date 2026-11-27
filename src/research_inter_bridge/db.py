@@ -701,6 +701,41 @@ MIGRATIONS: tuple[Migration, ...] = (
             "ON draft_versions (user_id, body_norm_sha256)",
         ),
     ),
+    Migration(
+        version=17,
+        name="email_approvals",
+        statements=(
+            # task.md §3.9 / ADR-026. At most one approval per draft, bound to
+            # the exact content hash of the version the student approved.
+            """
+            CREATE TABLE IF NOT EXISTS email_approvals (
+                draft_id INTEGER PRIMARY KEY REFERENCES email_drafts (id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                draft_version_id INTEGER NOT NULL
+                    REFERENCES draft_versions (id) ON DELETE CASCADE,
+                content_sha256 TEXT NOT NULL,
+                approved_at TEXT NOT NULL
+            )
+            """,
+            # The database itself clears an approval when the draft changes: a
+            # new version, or a recipient or attachment change on any version
+            # (an attachment becomes NULL when its CV version is deleted).
+            """
+            CREATE TRIGGER IF NOT EXISTS email_approvals_clear_on_new_version
+            AFTER INSERT ON draft_versions
+            BEGIN
+                DELETE FROM email_approvals WHERE draft_id = NEW.draft_id;
+            END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS email_approvals_clear_on_change
+            AFTER UPDATE OF subject, body, recipient, cv_version_id ON draft_versions
+            BEGIN
+                DELETE FROM email_approvals WHERE draft_id = NEW.draft_id;
+            END
+            """,
+        ),
+    ),
 )
 
 
