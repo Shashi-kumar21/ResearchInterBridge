@@ -439,9 +439,21 @@ def read_document(
     user_id: int,
     data_directory: Path | str,
 ) -> tuple[DocumentRecord, bytes]:
-    """Read a document's bytes, owner-scoped."""
+    """Read a document's bytes, owner-scoped, for parsing.
 
+    Every caller parses what it reads, so the ``document_processing`` consent
+    for the *current* policy version is re-checked here: a policy change must
+    stop parsing until the student accepts again (QA n1 on #47).
+    """
+
+    # Ownership first, so a foreign id is always "not found", then consent.
     record = get_document(connection, document_id=document_id, user_id=user_id)
+    if not consent.has_consent(connection, user_id, "document_processing"):
+        raise ConsentError(
+            "parsing documents requires the 'document_processing' consent for the current "
+            "policy; accept it on the consent page first (task.md §3.1).",
+            code="consent_required",
+        )
     path = _resolve(record.storage_path, data_directory)
     try:
         payload = path.read_bytes()

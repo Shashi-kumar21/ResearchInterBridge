@@ -534,6 +534,8 @@ class CvVersionOut(BaseModel):
     parent_version_id: int | None
     target_type: Literal["faculty", "program"] | None
     target_id: int | None
+    #: The professor's or program's name for a tailored version (QA n1 on #48).
+    target_name: str | None = None
     sections: list[CvSectionOut]
     created_at: str
     approved_at: str | None

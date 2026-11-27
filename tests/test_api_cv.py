@@ -159,6 +159,9 @@ def test_the_full_flow_decides_previews_and_approves(
     assert version["parent_version_id"] == run["version_id"]
     assert version["approved_at"] is not None
     assert [v["kind"] for v in versions] == ["original", "tailored"]
+    assert versions[0]["target_name"] is None
+    assert versions[1]["target_name"] == "Jane Doe"
+    assert version["target_name"] == "Jane Doe"
     assert (
         versions[0]["sections"] == client.get("/api/cv/versions").json()["versions"][0]["sections"]
     )
@@ -284,3 +287,18 @@ def test_a_suggestion_from_a_pruned_run_is_missing(client: TestClient, settings:
 
     assert response.status_code == 404
     assert error_code(response) == "cv_suggestion_missing"
+
+
+def test_creating_an_original_rechecks_the_current_consent(
+    client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # QA n1 on #47: a policy change stops parsing until the student accepts again.
+    from research_inter_bridge import consent
+
+    document_id = student(client)
+    monkeypatch.setattr(consent, "POLICY_VERSION", "next-policy")
+
+    response = client.post("/api/cv/originals", json={"document_id": document_id})
+
+    assert response.status_code == 403
+    assert error_code(response) == "consent_required"

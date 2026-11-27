@@ -797,3 +797,116 @@ export function refreshShortlist(): Promise<ShortlistChange> {
 export function removeFromShortlist(target: ShortlistTarget): Promise<void> {
   return request<void>(`/api/shortlist/${target.type}/${target.id}`, { method: "DELETE" });
 }
+
+// --------------------------------------------------------------------------- //
+// CV versions and suggestions (Phase 7, ADR-024)
+// --------------------------------------------------------------------------- //
+
+export interface CvSection {
+  readonly kind: string;
+  readonly heading: string | null;
+  readonly bullets: readonly string[];
+}
+
+export interface CvVersion {
+  readonly id: number;
+  readonly document_id: number;
+  readonly kind: "original" | "tailored";
+  readonly parent_version_id: number | null;
+  readonly target_type: MatchTargetType | null;
+  readonly target_id: number | null;
+  /** The professor's or program's name for a tailored version. */
+  readonly target_name: string | null;
+  readonly sections: readonly CvSection[];
+  readonly created_at: string;
+  readonly approved_at: string | null;
+}
+
+export type CvSuggestionKind =
+  | "reorder_sections"
+  | "reorder_bullets"
+  | "surface_skill"
+  | "flag_vague";
+
+export type CvSuggestionStatus = "pending" | "accepted" | "rejected" | "edited";
+
+/** A suggestion reuses only the student's own content; `evidence` says why. */
+export interface CvSuggestion {
+  readonly id: number;
+  readonly kind: CvSuggestionKind;
+  readonly section: number | null;
+  readonly bullet: number | null;
+  readonly before: readonly string[];
+  readonly after: readonly string[];
+  readonly reason: string;
+  readonly evidence: readonly string[];
+  readonly status: CvSuggestionStatus;
+  readonly edited_text: string | null;
+}
+
+export interface CvAnalysis {
+  readonly id: number;
+  readonly version_id: number;
+  readonly target_type: MatchTargetType;
+  readonly target_id: number;
+  readonly target_name: string;
+  readonly rules_version: string;
+  readonly created_at: string;
+  readonly suggestions: readonly CvSuggestion[];
+}
+
+export interface CvDiffLine {
+  readonly op: "same" | "added" | "removed";
+  readonly line: string;
+}
+
+export interface CvPreview {
+  readonly sections: readonly CvSection[];
+  readonly diff: readonly CvDiffLine[];
+  readonly applied: number;
+}
+
+export interface CvApproval {
+  readonly version: CvVersion;
+  readonly diff: readonly CvDiffLine[];
+}
+
+export function listCvVersions(): Promise<{ readonly versions: readonly CvVersion[] }> {
+  return request<{ readonly versions: readonly CvVersion[] }>("/api/cv/versions");
+}
+
+export function createCvOriginal(documentId: number): Promise<CvVersion> {
+  return request<CvVersion>("/api/cv/originals", {
+    method: "POST",
+    body: { document_id: documentId },
+  });
+}
+
+export function createCvAnalysis(
+  versionId: number,
+  target: ShortlistTarget,
+): Promise<CvAnalysis> {
+  return request<CvAnalysis>("/api/cv/analyses", {
+    method: "POST",
+    body: { version_id: versionId, target_type: target.type, target_id: target.id },
+  });
+}
+
+export function decideCvSuggestion(
+  suggestionId: number,
+  status: CvSuggestionStatus,
+  editedText?: string,
+): Promise<CvSuggestion> {
+  return request<CvSuggestion>(`/api/cv/suggestions/${suggestionId}`, {
+    method: "PATCH",
+    body: editedText === undefined ? { status } : { status, edited_text: editedText },
+  });
+}
+
+export function previewCvAnalysis(runId: number): Promise<CvPreview> {
+  return request<CvPreview>(`/api/cv/analyses/${runId}/preview`);
+}
+
+export function approveCvAnalysis(runId: number): Promise<CvApproval> {
+  return request<CvApproval>(`/api/cv/analyses/${runId}/approve`, { method: "POST" });
+}

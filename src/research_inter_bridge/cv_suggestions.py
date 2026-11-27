@@ -461,6 +461,27 @@ def _load_target(
     return _Target("program", program.id, program.name, terms, program.last_checked_at)
 
 
+def target_names(
+    connection: sqlite3.Connection, targets: Sequence[tuple[str, int]]
+) -> dict[tuple[str, int], str]:
+    """Names for many targets in at most two batched reads (one per type)."""
+
+    names: dict[tuple[str, int], str] = {}
+    for kind, table, column in (
+        ("faculty", "faculty_members", "full_name"),
+        ("program", "programs", "name"),
+    ):
+        ids = sorted({target_id for target_type, target_id in targets if target_type == kind})
+        for batch in discovery._batches(ids):
+            placeholders = ", ".join("?" for _ in batch)
+            for row in connection.execute(
+                f"SELECT id, {column} AS name FROM {table} WHERE id IN ({placeholders})",  # noqa: S608
+                batch,
+            ):
+                names[(kind, int(row["id"]))] = str(row["name"])
+    return names
+
+
 def _target_name(connection: sqlite3.Connection, target_type: str, target_id: int) -> str:
     table, column = (
         ("faculty_members", "full_name") if target_type == "faculty" else ("programs", "name")
@@ -556,7 +577,11 @@ def decide(
 
 
 def preview(
-    connection: sqlite3.Connection, *, user_id: int, run_id: int
+    connection: sqlite3.Connection,
+    *,
+    user_id: int,
+    run_id: int,
+    run: AnalysisRun | None = None,
 ) -> tuple[cv.CvSection, ...]:
     """The tailored CV the accepted and edited suggestions would produce.
 
@@ -564,7 +589,8 @@ def preview(
     a suggestion the student has not accepted (§3.7).
     """
 
-    run = get_run(connection, user_id=user_id, run_id=run_id)
+    if run is None or run.id != run_id:
+        run = get_run(connection, user_id=user_id, run_id=run_id)
     version = cv.get_version(connection, user_id=user_id, version_id=run.version_id)
     rows = {
         int(row["id"]): json.loads(row["payload_json"])
@@ -585,7 +611,7 @@ def approve(connection: sqlite3.Connection, *, user_id: int, run_id: int) -> cv.
             "accept or edit at least one suggestion before approving a tailored CV.",
             code="cv_nothing_accepted",
         )
-    sections = preview(connection, user_id=user_id, run_id=run_id)
+    sections = preview(connection, user_id=user_id, run_id=run_id, run=run)
     digest = cv.content_hash(sections)
     parent = cv.get_version(connection, user_id=user_id, version_id=run.version_id)
     if digest == parent.content_sha256:
