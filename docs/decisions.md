@@ -871,3 +871,36 @@ from soft ranking, and names unknowns.
   per-user, cascades on account or document deletion, and is in the account
   export.
 
+## ADR-025 — Optional LLM layer: off by default, guarded, capped
+
+**Status:** accepted 2026-11-26 · **Decided by:** Owner (ADR-024: "rules now, LLM later, provider decided later"); design by Dev, checklist from QA · **Spec:** `task.md` §6, §3.7
+
+**Decision:** build the provider interface, a mock, and every guard now, but
+implement no real provider until the Owner picks one with a model and budget.
+
+**Rules (`llm.py`, `config.py`, migration 15):**
+
+* `RIB_LLM_PROVIDER` accepts `off` (default) or `mock` only. Any other value
+  fails at start-up. `off` raises `llm_disabled` and makes no call.
+* `RIB_LLM_API_KEY` is read from the environment only and is
+  `field(repr=False)` on `Settings`, so it never reaches a log or an error.
+* A rewrite prompt holds one CV line and up to 12 target research terms, with
+  emails, URLs and phone numbers removed. No profile contact field is used.
+* Output vetting rejects (`llm_output_rejected`) empty or overlong text,
+  contact details or links, and any number not present in the source line.
+  Accepted text is labelled `ai_generated` and still needs the student's
+  explicit acceptance.
+* Cost:
+  * per-account rate limit `llm.call` (30 per hour);
+  * rolling 24-hour token caps per user (20k) and in total (200k), checked
+    before the call with a conservative estimate (`llm_quota_exceeded`);
+  * a per-call timeout (`llm_unavailable`);
+  * a per-user response cache keyed by the input fingerprint (30 days), so a
+    repeat is free.
+* `llm_usage` (the token ledger) and `llm_cache` are per-user, cascade on
+  account deletion, and appear in the account export. The audit row
+  `llm.call` records the purpose and token counts only, never text.
+
+**Not yet:** a real provider, an API route and a screen button. They need the
+Owner's provider, model and budget choice, plus their own review.
+

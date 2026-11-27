@@ -78,6 +78,10 @@ MATCH_RULE = RateLimitRule(name="match.score", limit=60, window_seconds=300)
 CV_RULE = RateLimitRule(name="cv.write", limit=120, window_seconds=300)
 
 
+#: LLM calls per account (cache hits are free). Paid per token, so kept tight.
+LLM_RULE = RateLimitRule(name="llm.call", limit=30, window_seconds=3600)
+
+
 def user_subject(user_id: int) -> str:
     """The rate-limit client key for a signed-in account."""
 

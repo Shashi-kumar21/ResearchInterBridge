@@ -624,6 +624,39 @@ MIGRATIONS: tuple[Migration, ...] = (
             "WHERE kind = 'tailored'",
         ),
     ),
+    Migration(
+        version=15,
+        name="llm_usage_and_cache",
+        statements=(
+            # ADR-025. Per-user token ledger for the cost caps, and a per-user
+            # response cache keyed by the input fingerprint. Neither stores the
+            # prompt; the cache stores only the vetted output.
+            """
+            CREATE TABLE IF NOT EXISTS llm_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                purpose TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                prompt_tokens INTEGER NOT NULL CHECK (prompt_tokens >= 0),
+                completion_tokens INTEGER NOT NULL CHECK (completion_tokens >= 0),
+                created_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_llm_usage_time ON llm_usage (created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_llm_usage_user_time ON llm_usage (user_id, created_at)",
+            """
+            CREATE TABLE IF NOT EXISTS llm_cache (
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                fingerprint TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                output TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, fingerprint)
+            )
+            """,
+        ),
+    ),
 )
 
 
