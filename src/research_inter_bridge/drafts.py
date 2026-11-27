@@ -29,7 +29,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
-from . import cv, db, profiles
+from . import cv, db, lint, profiles
 from . import faculty as faculty_service
 from .cv_suggestions import _line_match
 from .errors import CvVersionNotFoundError, DraftError
@@ -260,17 +260,26 @@ def compose(
     flags: list[str] = []
     keywords = _phrases(profile.research_keywords)
 
-    paper = _relevant_paper(member, keywords)
-    topic = _relevant_topic(member, keywords)
+    paper, paper_matched = _relevant_paper(member, keywords)
+    topic, topic_matched = _relevant_topic(member, keywords)
     if paper is not None:
         year = f" ({paper.year})" if paper.year else ""
         hook = f'Your paper "{paper.title}"{year} caught my interest'
         subject_topic = paper.title
         evidence.append({"claim": f"Paper: {paper.title}", "source": paper.url})
+        if not paper_matched:
+            flags.append(
+                "No paper matches your research keywords; the newest paper is referenced. "
+                "Check it fits, or choose another."
+            )
     elif topic is not None:
         hook = f"Your work on {topic} caught my interest"
         subject_topic = topic
         evidence.append({"claim": f"Research interest: {topic}", "source": member.profile_url})
+        if not topic_matched:
+            flags.append(
+                "No research interest matches your keywords; the first stated one is used."
+            )
         flags.append(
             "No attributed paper for this professor; the draft refers to a research topic."
         )
@@ -295,7 +304,12 @@ def compose(
         joined = "\n".join(f"- {line}" for line in lines)
         alignment = f"It connects with work I have done:\n{joined}"
         for line in lines:
-            evidence.append({"claim": f"Your CV: {line}", "source": "your approved CV"})
+            source = (
+                "your CV approved for this professor"
+                if attachment is not None and attachment.kind == "tailored"
+                else "your original CV"
+            )
+            evidence.append({"claim": f"Your CV: {line}", "source": source})
     else:
         alignment = ""
         flags.append("No line of your CV matched this professor; add your own sentence on fit.")
@@ -351,21 +365,28 @@ def _month(value: date) -> str:
 
 def _relevant_paper(
     member: faculty_service.FacultyMember, keywords: Sequence[str]
-) -> faculty_service.Publication | None:
+) -> tuple[faculty_service.Publication | None, bool]:
+    """The newest paper matching the student's keywords, else the newest paper.
+
+    The flag says whether it matched, so a fallback is reported (QA n1 on #51).
+    """
+
     papers = list(member.publications) or list(member.highlighted_publications)
     for paper in papers:  # newest first already
         title = " ".join(_tokens(paper.title))
         if any(_phrase_credit(keyword, (title,))[0] for keyword in keywords):
-            return paper
-    return papers[0] if papers else None
+            return paper, True
+    return (papers[0] if papers else None), False
 
 
-def _relevant_topic(member: faculty_service.FacultyMember, keywords: Sequence[str]) -> str | None:
+def _relevant_topic(
+    member: faculty_service.FacultyMember, keywords: Sequence[str]
+) -> tuple[str | None, bool]:
     for interest in member.research_interests:
         phrase = " ".join(_tokens(interest))
         if any(_phrase_credit(keyword, (phrase,))[0] for keyword in keywords):
-            return interest
-    return member.research_interests[0] if member.research_interests else None
+            return interest, True
+    return (member.research_interests[0] if member.research_interests else None), False
 
 
 def _matching_lines(
@@ -535,4 +556,35 @@ def _row_to_version(row: sqlite3.Row) -> DraftVersion:
         body_norm_sha256=str(row["body_norm_sha256"]),
         content_sha256=str(row["content_sha256"]),
         created_at=str(row["created_at"]),
+    )
+
+
+def references(version: DraftVersion) -> tuple[str, ...]:
+    """The verified paper titles and topics the body must still mention."""
+
+    found: list[str] = []
+    for item in version.evidence:
+        claim = item.get("claim", "")
+        for prefix in ("Paper: ", "Research interest: "):
+            if claim.startswith(prefix):
+                found.append(claim.removeprefix(prefix))
+    return tuple(found)
+
+
+def lint_draft(
+    connection: sqlite3.Connection, *, user_id: int, draft_id: int
+) -> tuple[lint.Finding, ...]:
+    """§14.2 findings for the draft's current version (one indexed duplicate lookup)."""
+
+    draft = get_draft(connection, user_id=user_id, draft_id=draft_id)
+    version = draft.current
+    return lint.lint(
+        lint.LintInput(
+            subject=version.subject,
+            body=version.body,
+            recipient=version.recipient,
+            attachment_kinds=("cv",) if version.cv_version_id is not None else (),
+            duplicate_draft_ids=duplicates(connection, user_id=user_id, draft_id=draft_id),
+            references=references(version),
+        )
     )

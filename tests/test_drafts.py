@@ -317,3 +317,55 @@ def test_the_content_hash_covers_subject_body_recipient_and_attachment() -> None
         )
         == 5
     )
+
+
+def test_a_fallback_reference_is_flagged_and_cv_source_is_labelled(
+    connection: sqlite3.Connection, tmp_path: Path
+) -> None:
+    # QA n1 and n4 on #51.
+    faculty_id = professor(
+        connection,
+        publications=(
+            fac.DiscoveredPublication(title="Compilers at Scale", doi="10.1234/cs", year=2024),
+        ),
+    )
+    user = student(connection, tmp_path)
+
+    version = drafts.generate(connection, user_id=user, faculty_id=faculty_id).current
+
+    assert any("No paper matches your research keywords" in flag for flag in version.flags)
+    cv_sources = {
+        item["source"] for item in version.evidence if item["claim"].startswith("Your CV:")
+    }
+    assert cv_sources == {"your original CV"}
+
+
+def test_a_generated_draft_lints_clean_and_a_bad_edit_is_blocked(
+    connection: sqlite3.Connection, tmp_path: Path
+) -> None:
+    faculty_id = professor(connection)
+    user = student(connection, tmp_path)
+    draft = drafts.generate(connection, user_id=user, faculty_id=faculty_id)
+
+    assert [f.code for f in drafts.lint_draft(connection, user_id=user, draft_id=draft.id)] == []
+
+    drafts.edit(
+        connection,
+        user_id=user,
+        draft_id=draft.id,
+        subject="RE: INTERNSHIP",
+        body="Click here for a limited time offer: https://bit.ly/abc",
+    )
+    blocked = {
+        f.code
+        for f in drafts.lint_draft(connection, user_id=user, draft_id=draft.id)
+        if f.level == "block"
+    }
+
+    assert blocked >= {
+        "subject_reply_prefix",
+        "subject_all_caps",
+        "spam_phrase",
+        "url_shortener",
+        "no_specific_reference",
+    }
