@@ -228,6 +228,14 @@ class LlmError(ResearchInterBridgeError):
         self.code = code
 
 
+class DraftError(ResearchInterBridgeError):
+    """A draft request that cannot be served. ``code`` is stable for the API."""
+
+    def __init__(self, message: str, *, code: str = "invalid_draft") -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class FacultyNotFoundError(DiscoveryError):
     """A faculty id that is not in the shared cache."""
 

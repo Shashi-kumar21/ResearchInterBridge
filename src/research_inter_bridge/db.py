@@ -657,6 +657,50 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=16,
+        name="email_drafts",
+        statements=(
+            # task.md §3.8 / ADR-026. Per-user, never shared. One draft per
+            # student and professor; every generation or edit is a new version.
+            """
+            CREATE TABLE IF NOT EXISTS email_drafts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                target_type TEXT NOT NULL CHECK (target_type IN ('faculty')),
+                target_id INTEGER NOT NULL CHECK (target_id > 0),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (user_id, target_type, target_id)
+            )
+            """,
+            # body_norm_sha256 is the per-user duplicate check (§14.2 "identical
+            # bodies across recipients"), answered by an index, not a scan.
+            # content_sha256 covers subject, body, recipient and attachment;
+            # approval in 8c binds to it.
+            """
+            CREATE TABLE IF NOT EXISTS draft_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                draft_id INTEGER NOT NULL REFERENCES email_drafts (id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                version_no INTEGER NOT NULL CHECK (version_no > 0),
+                source TEXT NOT NULL CHECK (source IN ('generated', 'edited')),
+                subject TEXT NOT NULL,
+                body TEXT NOT NULL,
+                recipient TEXT,
+                cv_version_id INTEGER REFERENCES cv_versions (id) ON DELETE SET NULL,
+                evidence_json TEXT NOT NULL,
+                flags_json TEXT NOT NULL,
+                body_norm_sha256 TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (draft_id, version_no)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_draft_versions_body "
+            "ON draft_versions (user_id, body_norm_sha256)",
+        ),
+    ),
 )
 
 

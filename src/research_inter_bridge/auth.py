@@ -37,6 +37,7 @@ from . import (
     cv_suggestions,
     db,
     documents,
+    drafts,
     llm,
     profiles,
     result_reuse,
@@ -630,6 +631,7 @@ def export_account_data(connection: sqlite3.Connection, user_id: int) -> dict[st
         "cv_versions": cv.export_payload(connection, user_id),
         "cv_analyses": cv_suggestions.export_payload(connection, user_id),
         "llm": llm.export_payload(connection, user_id),
+        "email_drafts": drafts.export_payload(connection, user_id),
     }
 
 
