@@ -95,6 +95,8 @@ _SPAM_RE = re.compile(
     re.I,
 )
 _WORD_RE = re.compile(r"[A-Za-z]{3,}")
+#: "…: <shortened title>…" in a generated subject.
+_CLIPPED_RE = re.compile(r":\s*([^\n:]{3,}?)…")
 _NOREPLY_RE = re.compile(r"no[-_.]?reply|do[-_.]?not[-_.]?reply", re.I)
 
 
@@ -172,7 +174,7 @@ def lint(draft: LintInput) -> tuple[Finding, ...]:
             "Remove HTML tags: drafts are plain text, so images, tracking pixels and hidden "
             "text are not allowed.",
         )
-    links = _LINK_RE.findall(body)
+    links = _LINK_RE.findall(text)
     if len(links) > MAX_LINKS:
         block(
             "too_many_links",
@@ -181,11 +183,15 @@ def lint(draft: LintInput) -> tuple[Finding, ...]:
         )
     for link in links:
         host, path, query = _parts(link)
-        if host in SHORTENER_HOSTS:
+        if _in_domains(host, SHORTENER_HOSTS):
             block("url_shortener", f"Replace the shortened link ({host}) with the full address.")
-        elif host in REDIRECT_HOSTS or (path in REDIRECT_PATHS and REDIRECT_PARAMS & set(query)):
+        elif _in_domains(host, REDIRECT_HOSTS) or (
+            path in REDIRECT_PATHS and REDIRECT_PARAMS & set(query)
+        ):
             block("redirect_link", f"Link directly to the page instead of through {host}.")
-    spam = sorted({match.group(0).casefold() for match in _SPAM_RE.finditer(text)})
+    spam = sorted(
+        {match.group(0).casefold() for match in _SPAM_RE.finditer(_without(text, draft.references))}
+    )
     if spam:
         block(
             "spam_phrase",
@@ -237,6 +243,33 @@ def lint(draft: LintInput) -> tuple[Finding, ...]:
 
 def blocking(findings: Sequence[Finding]) -> tuple[Finding, ...]:
     return tuple(finding for finding in findings if finding.level == "block")
+
+
+def _without(text: str, spans: Sequence[str]) -> str:
+    """Blank verified paper titles and topics before the spam scan.
+
+    They are the professor's own words, and the body must quote them, so a
+    title such as "Provably Guaranteed Convergence ..." must never block the
+    draft (QA B1 on #52).
+    """
+
+    for span in spans:
+        if span.strip():
+            text = re.sub(re.escape(span), " ", text, flags=re.I)
+    # A generated subject may shorten a long title with "…"; blank that
+    # shortened title too when it is a prefix of a verified reference.
+    lowered = [span.casefold() for span in spans if span.strip()]
+    for match in list(_CLIPPED_RE.finditer(text)):
+        clipped = match.group(1).strip().casefold()
+        if clipped and any(span.startswith(clipped) for span in lowered):
+            text = text.replace(match.group(0), " ")
+    return text
+
+
+def _in_domains(host: str, domains: frozenset[str]) -> bool:
+    """``host`` is one of ``domains`` or a subdomain of one (QA n2 on #52)."""
+
+    return any(host == domain or host.endswith(f".{domain}") for domain in domains)
 
 
 def _parts(link: str) -> tuple[str, str, list[str]]:

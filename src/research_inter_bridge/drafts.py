@@ -330,7 +330,9 @@ def compose(
         [ask, "Thank you for your time.", f"Kind regards,\n{name}\n{profile.contact_email}"]
     )
     body = "\n\n".join(part for part in parts if part)
-    subject = _clip(f"Research internship inquiry: {subject_topic}", MAX_SUBJECT_LENGTH)
+    # Kept within the lint's subject limit so a generated draft never warns
+    # subject_long (QA n1 on #52); the full title stays in the body.
+    subject = _clip(f"Research internship inquiry: {subject_topic}", lint.MAX_SUBJECT_LENGTH)
     if attachment is None:
         flags.append("No CV version is attached; choose your original or an approved version.")
     return subject, body, evidence, flags

@@ -369,3 +369,27 @@ def test_a_generated_draft_lints_clean_and_a_bad_edit_is_blocked(
         "url_shortener",
         "no_specific_reference",
     }
+
+
+def test_a_long_paper_title_keeps_the_generated_subject_within_the_limit(
+    connection: sqlite3.Connection, tmp_path: Path
+) -> None:
+    # QA n1 on #52.
+    from research_inter_bridge import lint
+
+    long_title = "Deep Learning for Proteins: " + "a very long and detailed subtitle " * 3
+    faculty_id = professor(
+        connection,
+        publications=(
+            fac.DiscoveredPublication(title=long_title.strip(), doi="10.1234/lt", year=2025),
+        ),
+    )
+    user = student(connection, tmp_path)
+
+    draft = drafts.generate(connection, user_id=user, faculty_id=faculty_id)
+
+    assert len(draft.current.subject) <= lint.MAX_SUBJECT_LENGTH
+    assert long_title.strip() in draft.current.body
+    assert "subject_long" not in {
+        f.code for f in drafts.lint_draft(connection, user_id=user, draft_id=draft.id)
+    }

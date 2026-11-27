@@ -148,3 +148,35 @@ def test_a_10kb_body_lints_quickly_and_deterministically() -> None:
 
     assert elapsed < 0.2
     assert lint.lint(draft(body=body)) == first
+
+
+def test_a_verified_title_with_a_spam_word_never_blocks() -> None:
+    # QA B1 on #52: the body must quote the title, so it cannot be spam.
+    title = "Provably Guaranteed Convergence of Federated Learning"
+    body = GOOD_BODY.replace("Protein Folding with Deep Learning", title)
+
+    findings = lint.lint(draft(body=body, references=(title,)))
+
+    assert "spam_phrase" not in codes(findings)
+    # The same word written by the student elsewhere is still caught.
+    extra = lint.lint(draft(body=body + "\nSuccess is guaranteed.", references=(title,)))
+    assert "spam_phrase" in codes(extra, "block")
+
+
+def test_shortener_and_redirect_subdomains_and_subject_links_are_caught() -> None:
+    # QA n2 and n3 on #52.
+    sub = GOOD_BODY.replace("https://doi.org/10.1234/pf", "https://m.bit.ly/x")
+    assert "url_shortener" in codes(lint.lint(draft(body=sub)), "block")
+    assert "url_shortener" in codes(lint.lint(draft(subject="See https://tinyurl.com/x")), "block")
+    many = lint.lint(draft(subject="https://a.edu https://b.edu"))
+    assert "too_many_links" in codes(many, "block")
+
+
+def test_a_shortened_title_in_the_subject_is_not_spam() -> None:
+    title = "Provably Guaranteed Convergence of Federated Learning Under Heavy Tailed Noise Models"
+    body = GOOD_BODY.replace("Protein Folding with Deep Learning", title)
+    subject = "Research internship inquiry: Provably Guaranteed Convergence of Federated…"
+
+    assert "spam_phrase" not in codes(
+        lint.lint(draft(subject=subject, body=body, references=(title,)))
+    )
