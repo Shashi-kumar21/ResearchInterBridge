@@ -910,3 +910,92 @@ export function previewCvAnalysis(runId: number): Promise<CvPreview> {
 export function approveCvAnalysis(runId: number): Promise<CvApproval> {
   return request<CvApproval>(`/api/cv/analyses/${runId}/approve`, { method: "POST" });
 }
+
+// --------------------------------------------------------------------------- //
+// email drafts (Phase 8, ADR-026)
+// --------------------------------------------------------------------------- //
+
+export interface LintFinding {
+  readonly code: string;
+  readonly level: "block" | "warn";
+  readonly message: string;
+}
+
+export interface DraftEvidence {
+  readonly claim: string;
+  readonly source: string;
+}
+
+export interface DraftVersion {
+  readonly version_no: number;
+  readonly source: "generated" | "edited";
+  readonly subject: string;
+  readonly body: string;
+  readonly recipient: string | null;
+  readonly cv_version_id: number | null;
+  readonly evidence: readonly DraftEvidence[];
+  readonly flags: readonly string[];
+  readonly created_at: string;
+}
+
+export interface DraftApproval {
+  readonly version_no: number;
+  readonly content_sha256: string;
+  readonly approved_at: string;
+}
+
+/** Plain text only: the screen renders subject and body as text, never HTML. */
+export interface EmailDraft {
+  readonly id: number;
+  readonly target_type: "faculty";
+  readonly target_id: number;
+  readonly target_name: string;
+  readonly current: DraftVersion;
+  readonly history: readonly DraftVersion[];
+  readonly lint: readonly LintFinding[];
+  readonly approval: DraftApproval | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface DraftSummary {
+  readonly id: number;
+  readonly target_id: number;
+  readonly target_name: string;
+  readonly subject: string;
+  readonly version_no: number;
+  readonly recipient: string | null;
+  readonly flag_count: number;
+  readonly approved: boolean;
+  readonly updated_at: string;
+}
+
+export function listDrafts(): Promise<{ readonly drafts: readonly DraftSummary[] }> {
+  return request<{ readonly drafts: readonly DraftSummary[] }>("/api/drafts");
+}
+
+export function createDraft(facultyId: number, cvVersionId?: number): Promise<EmailDraft> {
+  return request<EmailDraft>("/api/drafts", {
+    method: "POST",
+    body: cvVersionId === undefined ? { faculty_id: facultyId } : { faculty_id: facultyId, cv_version_id: cvVersionId },
+  });
+}
+
+export function getDraft(draftId: number): Promise<EmailDraft> {
+  return request<EmailDraft>(`/api/drafts/${draftId}`);
+}
+
+export function saveDraft(draftId: number, subject: string, body: string): Promise<EmailDraft> {
+  return request<EmailDraft>(`/api/drafts/${draftId}`, { method: "PUT", body: { subject, body } });
+}
+
+export function approveDraft(draftId: number, versionNo: number): Promise<EmailDraft> {
+  return request<EmailDraft>(`/api/drafts/${draftId}/approve`, {
+    method: "POST",
+    body: { version_no: versionNo },
+  });
+}
+
+export function withdrawDraftApproval(draftId: number): Promise<EmailDraft> {
+  return request<EmailDraft>(`/api/drafts/${draftId}/approval`, { method: "DELETE" });
+}

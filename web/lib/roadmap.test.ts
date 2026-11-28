@@ -147,7 +147,7 @@ describe("capability model", () => {
 
 describe("summaryCounts", () => {
   it("counts each status", () => {
-    expect(summaryCounts()).toEqual({ available: 7, inProgress: 1, planned: 3 });
+    expect(summaryCounts()).toEqual({ available: 8, inProgress: 1, planned: 2 });
   });
 
   it("counts the whole list", () => {

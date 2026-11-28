@@ -225,7 +225,7 @@ def summaries(connection: sqlite3.Connection, *, user_id: int) -> tuple[DraftSum
 
     rows = connection.execute(
         "SELECT d.id, d.target_id, d.updated_at, v.id AS version_id, v.version_no, v.subject, "
-        "v.recipient, v.cv_version_id, v.body, v.flags_json, v.content_sha256, "
+        "v.recipient, v.flags_json, v.content_sha256, "
         "a.draft_version_id AS approved_version, a.content_sha256 AS approved_hash "
         "FROM email_drafts AS d "
         "JOIN draft_versions AS v ON v.draft_id = d.id AND v.version_no = "
@@ -245,13 +245,13 @@ def summaries(connection: sqlite3.Connection, *, user_id: int) -> tuple[DraftSum
             names[int(name_row["id"])] = str(name_row["full_name"])
     result: list[DraftSummary] = []
     for row in rows:
-        live_hash = content_hash(
-            str(row["subject"]), str(row["body"]), row["recipient"], row["cv_version_id"]
-        )
+        # The migration-17 triggers delete an approval on any content change,
+        # so the stored hash plus the version id is enough here; no body is
+        # read for the list (QA n1 on #53).
         approved = (
             row["approved_version"] is not None
             and int(row["approved_version"]) == int(row["version_id"])
-            and row["approved_hash"] == live_hash
+            and row["approved_hash"] == row["content_sha256"]
         )
         result.append(
             DraftSummary(

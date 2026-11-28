@@ -876,3 +876,42 @@ main > section {
     grid-template-columns: 1fr;
   }
 }
+
+/* --- Email drafts (Phase 8d) ---------------------------------------------- */
+
+.draft-studio textarea {
+  width: 100%;
+  font: inherit;
+}
+
+.draft-lint {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+}
+
+.draft-lint li {
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  margin-bottom: 0.25rem;
+}
+
+.draft-lint-block {
+  background: rgba(248, 81, 73, 0.15);
+}
+
+.draft-lint-warn {
+  background: rgba(210, 153, 34, 0.15);
+}
+
+.draft-approved {
+  padding: 0.5rem;
+  border-radius: 6px;
+  background: rgba(46, 160, 67, 0.15);
+}
+
+.draft-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+}
