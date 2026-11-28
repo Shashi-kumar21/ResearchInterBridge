@@ -371,6 +371,7 @@ src/research_inter_bridge/    Python package
   cv_suggestions.py           rule-based, professor-specific CV suggestions with evidence
   llm.py                      optional LLM layer (off by default): mock, guards, caps, cache
   drafts.py                   professor-specific email drafts from verified facts, versioned
+  lint.py                     deterministic §14.2 draft lint: stable codes, block vs warn
   http_source.py              polite contact-bearing HTTP GET boundary (ADR-017)
   program_pages.py            explicit schema.org JSON-LD program parser
   api/                        FastAPI app: sessions, CORS, consent and account routes
