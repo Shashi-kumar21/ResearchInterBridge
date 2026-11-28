@@ -25,6 +25,7 @@ from ..errors import (
     CvError,
     DiscoveryError,
     DocumentError,
+    DraftError,
     ProfileError,
     RateLimitError,
     ShortlistError,
@@ -38,6 +39,7 @@ from .routes import (
     CV_STATUS_CODES,
     DISCOVERY_STATUS_CODES,
     DOCUMENT_STATUS_CODES,
+    DRAFT_STATUS_CODES,
     PROFILE_STATUS_CODES,
     SHORTLIST_STATUS_CODES,
     router,
@@ -206,6 +208,12 @@ def _install_error_handlers(app: FastAPI) -> None:
     async def _cv_error(request: Request, exc: CvError) -> JSONResponse:
         # Messages name the field or the missing id, never CV text.
         status_code = CV_STATUS_CODES.get(exc.code, status.HTTP_400_BAD_REQUEST)
+        return error_response(status_code, exc.code, str(exc))
+
+    @app.exception_handler(DraftError)
+    async def _draft_error(request: Request, exc: DraftError) -> JSONResponse:
+        # Messages name the lint codes or the field to fix, never draft text.
+        status_code = DRAFT_STATUS_CODES.get(exc.code, status.HTTP_400_BAD_REQUEST)
         return error_response(status_code, exc.code, str(exc))
 
     @app.exception_handler(ShortlistError)

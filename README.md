@@ -222,6 +222,12 @@ if the database cannot be opened.
 | `PATCH` | `/api/cv/suggestions/{id}` | cookie | `{status: accepted|rejected|edited|pending, edited_text?}`; nothing is applied until approval |
 | `GET` | `/api/cv/analyses/{id}/preview` | cookie | the tailored sections the accepted changes would produce, with a line diff |
 | `POST` | `/api/cv/analyses/{id}/approve` | cookie | explicit approval: creates the tailored version; `409 cv_nothing_accepted` or `cv_nothing_changed` |
+| `GET` | `/api/drafts` | cookie | the student's email drafts: current version only (subject, recipient, flags, approved) |
+| `POST` | `/api/drafts` | cookie | generate or regenerate the draft for `{faculty_id, cv_version_id?}` from verified facts only |
+| `GET` | `/api/drafts/{id}` | cookie | one draft with version history, evidence, flags, live §14.2 lint and approval |
+| `PUT` | `/api/drafts/{id}` | cookie | save the student's `{subject, body}` as a new version; clears any approval |
+| `POST` | `/api/drafts/{id}/approve` | cookie | approve the exact reviewed `{version_no}`; `409 draft_changed`, `draft_recipient_unverified` or `draft_lint_blocked` |
+| `DELETE` | `/api/drafts/{id}/approval` | cookie | withdraw an approval before sending (nothing is sent in Phase 8) |
 
 Every failure has the same shape, `{"error": {"code", "message"}}`, with stable
 codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
@@ -233,7 +239,8 @@ codes such as `invalid_credentials` (401), `account_locked` (429), `email_taken`
 `invalid_shortlist` (400), `shortlist_full` (409), `shortlist_item_missing` (404),
 `invalid_matching` (500, logged),
 `invalid_cv` (400), `cv_version_missing`/`cv_run_missing`/`cv_suggestion_missing` (404),
-`cv_nothing_accepted`/`cv_nothing_changed` (409), `institution_missing`
+`cv_nothing_accepted`/`cv_nothing_changed` (409),
+`invalid_draft` (400), `draft_missing` (404), `draft_wrong_cv`/`draft_changed`/`draft_recipient_unverified`/`draft_lint_blocked` (409), `institution_missing`
 (404) and `discovery_unavailable` (503). A rejected request body never echoes
 its values, so a bad password is not reflected back or written to the caller's
 logs.

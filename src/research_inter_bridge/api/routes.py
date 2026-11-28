@@ -22,6 +22,7 @@ from .. import (
     recommendations,
 )
 from .. import cv as cv_service
+from .. import drafts as drafts_service
 from .. import faculty as faculty_service
 from .. import shortlist as shortlist_service
 from ..errors import (
@@ -64,6 +65,15 @@ from .schemas import (
     DepartmentOut,
     DocumentListOut,
     DocumentOut,
+    DraftApprovalOut,
+    DraftApproveRequest,
+    DraftCreateRequest,
+    DraftEditRequest,
+    DraftEvidenceOut,
+    DraftListOut,
+    DraftOut,
+    DraftSummaryOut,
+    DraftVersionOut,
     FactApplyOut,
     FactApplyRequest,
     FactGroupOut,
@@ -81,6 +91,7 @@ from .schemas import (
     HealthOut,
     InstitutionListOut,
     InstitutionOut,
+    LintFindingOut,
     LoginRequest,
     MatchOut,
     MeOut,
@@ -157,6 +168,15 @@ CV_STATUS_CODES: dict[str, int] = {
     "cv_suggestion_missing": status.HTTP_404_NOT_FOUND,
     "cv_nothing_accepted": status.HTTP_409_CONFLICT,
     "cv_nothing_changed": status.HTTP_409_CONFLICT,
+}
+
+DRAFT_STATUS_CODES: dict[str, int] = {
+    "invalid_draft": status.HTTP_400_BAD_REQUEST,
+    "draft_missing": status.HTTP_404_NOT_FOUND,
+    "draft_wrong_cv": status.HTTP_409_CONFLICT,
+    "draft_changed": status.HTTP_409_CONFLICT,
+    "draft_recipient_unverified": status.HTTP_409_CONFLICT,
+    "draft_lint_blocked": status.HTTP_409_CONFLICT,
 }
 
 SHORTLIST_STATUS_CODES: dict[str, int] = {
@@ -1513,3 +1533,151 @@ def approve_cv_analysis(
         version=_cv_version_out(version, names),
         diff=_cv_diff_out(cv_suggestions.diff(parent.sections, version.sections)),
     )
+
+
+# --------------------------------------------------------------------------- #
+# email drafts (Phase 8, ADR-026)
+# --------------------------------------------------------------------------- #
+
+
+def _draft_version_out(version: drafts_service.DraftVersion) -> DraftVersionOut:
+    return DraftVersionOut(
+        version_no=version.version_no,
+        source=version.source,  # type: ignore[arg-type]
+        subject=version.subject,
+        body=version.body,
+        recipient=version.recipient,
+        cv_version_id=version.cv_version_id,
+        evidence=[DraftEvidenceOut(**item) for item in version.evidence],
+        flags=list(version.flags),
+        created_at=version.created_at,
+    )
+
+
+def _draft_out(
+    connection: sqlite3.Connection, draft: drafts_service.Draft, user_id: int
+) -> DraftOut:
+    findings = drafts_service.lint_draft(connection, user_id=user_id, draft_id=draft.id)
+    return DraftOut(
+        id=draft.id,
+        target_type="faculty",
+        target_id=draft.target_id,
+        target_name=draft.target_name,
+        current=_draft_version_out(draft.current),
+        history=[_draft_version_out(version) for version in draft.history],
+        lint=[LintFindingOut(code=f.code, level=f.level, message=f.message) for f in findings],
+        approval=None
+        if draft.approval is None
+        else DraftApprovalOut(
+            version_no=draft.approval.version_no,
+            content_sha256=draft.approval.content_sha256,
+            approved_at=draft.approval.approved_at,
+        ),
+        created_at=draft.created_at,
+        updated_at=draft.updated_at,
+    )
+
+
+def _check_draft_budget(connection: sqlite3.Connection, user_id: int) -> None:
+    ratelimit.check(connection, rule=ratelimit.DRAFT_RULE, client=ratelimit.user_subject(user_id))
+
+
+@router.get("/drafts", response_model=DraftListOut, tags=["drafts"])
+def list_email_drafts(
+    account: CurrentAccount, connection: Connection, response: Response
+) -> DraftListOut:
+    """The student's drafts: current versions only, names batched (no history)."""
+
+    response.headers["Cache-Control"] = "no-store"
+    rows = drafts_service.summaries(connection, user_id=account.user_id)
+    return DraftListOut(
+        drafts=[
+            DraftSummaryOut(
+                id=row.id,
+                target_id=row.target_id,
+                target_name=row.target_name,
+                subject=row.subject,
+                version_no=row.version_no,
+                recipient=row.recipient,
+                flag_count=row.flag_count,
+                approved=row.approved,
+                updated_at=row.updated_at,
+            )
+            for row in rows
+        ]
+    )
+
+
+@router.post("/drafts", response_model=DraftOut, tags=["drafts"])
+def create_email_draft(
+    payload: DraftCreateRequest, account: CurrentAccount, connection: Connection
+) -> DraftOut:
+    """Generate (or regenerate) the draft for one professor from verified facts."""
+
+    _check_draft_budget(connection, account.user_id)
+    draft = drafts_service.generate(
+        connection,
+        user_id=account.user_id,
+        faculty_id=payload.faculty_id,
+        cv_version_id=payload.cv_version_id,
+    )
+    return _draft_out(connection, draft, account.user_id)
+
+
+@router.get("/drafts/{draft_id}", response_model=DraftOut, tags=["drafts"])
+def get_email_draft(
+    draft_id: Annotated[int, Path(ge=1)],
+    account: CurrentAccount,
+    connection: Connection,
+    response: Response,
+) -> DraftOut:
+    response.headers["Cache-Control"] = "no-store"
+    draft = drafts_service.get_draft(connection, user_id=account.user_id, draft_id=draft_id)
+    return _draft_out(connection, draft, account.user_id)
+
+
+@router.put("/drafts/{draft_id}", response_model=DraftOut, tags=["drafts"])
+def edit_email_draft(
+    draft_id: Annotated[int, Path(ge=1)],
+    payload: DraftEditRequest,
+    account: CurrentAccount,
+    connection: Connection,
+) -> DraftOut:
+    """Save the student's subject and body as a new version; clears any approval."""
+
+    _check_draft_budget(connection, account.user_id)
+    draft = drafts_service.edit(
+        connection,
+        user_id=account.user_id,
+        draft_id=draft_id,
+        subject=payload.subject,
+        body=payload.body,
+    )
+    return _draft_out(connection, draft, account.user_id)
+
+
+@router.post("/drafts/{draft_id}/approve", response_model=DraftOut, tags=["drafts"])
+def approve_email_draft(
+    draft_id: Annotated[int, Path(ge=1)],
+    payload: DraftApproveRequest,
+    account: CurrentAccount,
+    connection: Connection,
+) -> DraftOut:
+    """Approve the exact reviewed version. Nothing is sent (sending is Phase 10)."""
+
+    _check_draft_budget(connection, account.user_id)
+    draft = drafts_service.approve(
+        connection, user_id=account.user_id, draft_id=draft_id, version_no=payload.version_no
+    )
+    return _draft_out(connection, draft, account.user_id)
+
+
+@router.delete("/drafts/{draft_id}/approval", response_model=DraftOut, tags=["drafts"])
+def withdraw_email_draft_approval(
+    draft_id: Annotated[int, Path(ge=1)], account: CurrentAccount, connection: Connection
+) -> DraftOut:
+    """Undo an approval before sending."""
+
+    _check_draft_budget(connection, account.user_id)
+    draft = drafts_service.withdraw_approval(connection, user_id=account.user_id, draft_id=draft_id)
+    return _draft_out(connection, draft, account.user_id)
