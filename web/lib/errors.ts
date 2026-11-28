@@ -65,6 +65,18 @@ export function describeApiError(error: unknown): string {
     case "faculty_missing":
     case "program_missing":
       return "That record is no longer in the research cache. Reload the page.";
+    case "draft_changed":
+      return "This draft changed since you reviewed it. The latest version is shown; review it before approving.";
+    case "draft_recipient_unverified":
+      return "This professor's email is no longer verified. Regenerate the draft once it is verified again.";
+    case "draft_lint_blocked":
+      return "Fix the blocking issues listed next to the draft before approving.";
+    case "draft_wrong_cv":
+      return "That CV version was approved for someone else. Attach your original or the version approved for this professor.";
+    case "draft_missing":
+      return "That draft is no longer available. Reload the page.";
+    case "invalid_draft":
+      return error.message;
     case "cv_nothing_accepted":
       return "Accept or edit at least one suggestion before approving.";
     case "cv_nothing_changed":

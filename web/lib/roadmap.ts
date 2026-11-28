@@ -140,10 +140,11 @@ export const CAPABILITIES: readonly Capability[] = [
     id: "drafts",
     title: "Draft studio",
     detail:
-      "A personalized draft per professor with the evidence it is built from, a " +
-      "deterministic deliverability check, and edits that invalidate a previous " +
-      "approval.",
-    status: "planned",
+      "A draft per shortlisted professor built from verified facts only, with the " +
+      "evidence it uses, a deterministic deliverability check shown next to the " +
+      "text, a version history, and approval of the exact version: any edit clears " +
+      "it. Nothing is sent from here yet.",
+    status: "available",
     surface: "web",
   },
   {
