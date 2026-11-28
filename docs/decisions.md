@@ -904,3 +904,42 @@ implement no real provider until the Owner picks one with a model and budget.
 **Not yet:** a real provider, an API route and a screen button. They need the
 Owner's provider, model and budget choice, plus their own review.
 
+## ADR-026 — Email studio: template drafts from verified facts, spec-strict lint, approved-CV attachment
+
+**Status:** accepted 2026-11-27 · **Decided by:** Owner (options and recommendation by Dev; checklist from QA) · **Spec:** `task.md` §3.8, §14.2
+
+**Options and decisions (Owner, 2026-11-27):**
+
+1. Draft text: (a) a template filled with verified facts; (b) a blank editor
+   with an evidence panel; (c) wait for AI drafting. **Chosen: (a).** Zero
+   cost and no invention. AI wording can be layered on later through ADR-025.
+2. Lint: (a) block the §14.2 rules and warn on style; (b) warn only; (c)
+   block everything. **Chosen: (a).**
+3. Attachments: (a) only a CV version approved for that professor, or the
+   original; (b) CV plus a transcript. **Chosen: (a)**, at most one; the PDF is
+   rendered at send time.
+
+**Rules (8a, `drafts.py`, migration 16):**
+
+* One draft per student and professor; every generation or edit is a new
+  version, and the last 20 are kept.
+* The template uses:
+  * the professor's verified name and stated title ("Professor" only when the
+    title says so; never a guessed "Dr.");
+  * one attributed paper (title, year, link), preferring one that matches the
+    student's keywords, or else a stated research interest;
+  * the student's confirmed name, degree, institution and internship dates;
+  * at most two of the student's own CV lines that match the professor.
+
+  Wording never claims something unconfirmed ("caught my interest", never "I
+  read"). Missing or unverified details become flags, never guesses.
+* The recipient is set only from a verified, current email (`contact_sendable`).
+* The attachment is the chosen CV version, or the version approved for this
+  professor, or the original. A version approved for another target is
+  refused (`draft_wrong_cv`).
+* Plain text only. `body_norm_sha256` (indexed per user) answers "identical
+  bodies across recipients" without a scan. `content_sha256` covers subject,
+  body, recipient and attachment; approval binds to it in 8c.
+* The audit records the draft id, version number and content hash, never
+  subject or body.
+
